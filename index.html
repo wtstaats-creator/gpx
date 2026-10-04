@@ -1,0 +1,2149 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Veldkompas — Vogel- en veldweer dashboard</title>
+
+<!-- Iconen (favicon, favorieten, beginscherm). De PNG-bestanden en het manifest staan als losse bestanden
+     naast deze pagina: Safari en Chrome pakken het logo bij het opslaan alleen van een echt bestand. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgNjQgNjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTUiIGZpbGw9IiMxRjIzMjgiLz4KICA8Y2lyY2xlIGN4PSIzMiIgY3k9IjMyIiByPSIyMSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRkJGQUY0IiBzdHJva2Utd2lkdGg9IjMiLz4KICA8ZyB0cmFuc2Zvcm09InJvdGF0ZSgyOCAzMiAzMikiPgogICAgPHBhdGggZD0iTTMyIDE1IDIxLjUgNDUgMzIgMzguNVoiIGZpbGw9IiNFMjY3MkEiLz4KICAgIDxwYXRoIGQ9Ik0zMiAxNSA0Mi41IDQ1IDMyIDM4LjVaIiBmaWxsPSIjQjg0RTFCIi8+CiAgPC9nPgo8L3N2Zz4K">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=2">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=2">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=2">
+<link rel="manifest" href="manifest.webmanifest?v=2">
+<meta name="theme-color" content="#1F2328">
+<meta name="apple-mobile-web-app-title" content="Veldkompas">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+
+<!-- Lettertypen: Fraunces (koppen), Inter (tekst), JetBrains Mono (cijfers) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<style>
+  /* ---------------------------------------------------------------
+     Schermvullende kaart met zwevende, doorschijnende vlakken.
+  --------------------------------------------------------------- */
+  :root {
+    --fg: #1F2328; --muted: #5F666D;
+    --glass: rgba(251,250,244,.62); --glass-line: rgba(255,255,255,.72);
+    --tint: rgba(255,255,255,.48); --field: rgba(255,255,255,.58);
+    --accent: #D95B22; --rust: #E2672A; --bad: #B84E1B;
+    --shadow: 0 8px 30px rgba(31,35,40,.22);
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --bleed: 200px;
+    color-scheme: light;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    /* Zelfde kleur als het vlak onderin: waar de browser een eigen rand toont, loopt die daarin over. */
+    background: #FBFAF4;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px; line-height: 1.35;
+    color: var(--fg);
+  }
+  button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+  svg, canvas { display: block; }
+  .hidden { display: none !important; }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  /* De kaart steekt boven en onder ruim buiten beeld, zodat hij ook achter de statusbalk en
+     de doorschijnende werkbalk van de mobiele browser doorloopt. Boven en onder evenveel, dus
+     het midden van de kaart blijft het midden van het scherm. */
+  #main-map-viewport { position: fixed; left: 0; right: 0; top: calc(-1 * var(--bleed)); bottom: calc(-1 * var(--bleed)); overflow: hidden; }
+  #main-map { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #main-map-viewport.is-drawing #main-map { cursor: crosshair; }
+  .leaflet-container { font-family: 'Inter', sans-serif; background: #e6e7e4; }
+
+  /* Basis voor alle knoppen en vlakken */
+  .gbtn {
+    background: transparent; border: 0;
+    border-radius: 999px; min-width: 46px; height: 46px; padding: 0 12px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    white-space: nowrap; -webkit-tap-highlight-color: transparent;
+    transition: background-color .15s ease, color .15s ease, transform .1s ease;
+  }
+  .gbtn:active { background: var(--tint); transform: scale(.97); }
+  .glass {
+    background: var(--glass); color: var(--fg);
+    -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-line); box-shadow: var(--shadow);
+  }
+  .gbtn.tint { background: var(--tint); }
+  .gbtn.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  .gbtn.is-active { background: var(--accent); color: #FBFAF4; }
+  .gbtn.danger { color: var(--bad); }
+  .gbtn.is-busy { opacity: .5; }
+  .gbtn.round { width: 50px; height: 50px; padding: 0; }
+  .gbtn.round-s { width: 40px; height: 40px; min-width: 40px; padding: 0; }
+  .gbtn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  svg.i { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+
+  /* Koptekst: logo en zoekveld in één balk */
+  .top {
+    position: absolute; z-index: 1000; top: calc(10px + var(--safe-top)); left: 10px; right: 70px; max-width: 420px;
+    display: flex; align-items: center; gap: 8px; height: 50px; padding: 0 16px 0 8px; border-radius: 999px;
+  }
+  .top:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .top form { flex: 1; min-width: 0; margin: 0; }
+  .top form.is-busy { opacity: .5; }
+  .top input {
+    width: 100%; height: 48px; border: 0; outline: 0; background: transparent;
+    font: inherit; font-size: 16px; color: var(--fg); padding: 0;
+  }
+  .top input::placeholder { color: var(--muted); }
+  .results {
+    position: absolute; z-index: 1002; top: calc(66px + var(--safe-top)); left: 10px; right: 70px; max-width: 420px;
+    border-radius: 22px; overflow: hidden; background: rgba(251,250,244,.97);
+    border: 1px solid var(--glass-line); box-shadow: var(--shadow);
+  }
+  .results button {
+    display: block; width: 100%; text-align: left; padding: 11px 16px; font-size: 14px;
+    background: transparent; border: 0; border-bottom: 1px solid rgba(31,35,40,.08);
+  }
+  .results button:last-child { border-bottom: 0; }
+  .results button:hover { background: #FBE6DA; }
+  #logo-icon { flex: 0 0 auto; cursor: pointer; }
+  @keyframes logo-chirp {
+    0%, 100% { transform: scale(1) rotate(0deg); }
+    30% { transform: scale(1.12) rotate(-5deg); }
+    55% { transform: scale(0.96) rotate(4deg); }
+    80% { transform: scale(1.03) rotate(-1deg); }
+  }
+  #logo-icon.logo-chirping { animation: logo-chirp 0.5s ease-in-out; }
+
+  /* Ronde knoppen rechts */
+  .rail {
+    position: absolute; z-index: 1000; top: calc(10px + var(--safe-top)); right: 10px;
+    display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  @media (max-width: 760px) { body.sheet-full .rail { opacity: 0; pointer-events: none; transform: translateX(16px); } }
+  .zoom { display: flex; flex-direction: column; border-radius: 25px; overflow: hidden; }
+  .zoom .gbtn { width: 50px; height: 46px; border-radius: 0; font-size: 22px; padding: 0; }
+  .zoom .gbtn + .gbtn { border-top: 1px solid var(--glass-line); }
+  @media (pointer: coarse) { .zoom { display: none; } }
+
+  /* ---------------------------------------------------------------
+     Het uittrekbare vlak: drie standen (strook, half, vol). JS zet de
+     verschuiving en de hoogte van het scrollende deel.
+  --------------------------------------------------------------- */
+  .sheet {
+    position: absolute; z-index: 1001; left: 0; right: 0; bottom: 0; margin-inline: auto; max-width: 640px;
+    height: calc(100% - 70px - var(--safe-top));
+    scroll-padding-bottom: var(--safe-bottom); /* alleen zodat JS de veilige onderrand kan uitlezen */
+    display: flex; flex-direction: column;
+    background: rgba(251,250,244,.95); -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-line); border-bottom: 0; border-radius: 26px 26px 0 0;
+    box-shadow: 0 -6px 30px rgba(31,35,40,.18);
+    transform: translateY(calc(100% - 84px));
+    transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  }
+  /* Het vlak loopt onder de schermrand door, achter de werkbalk van de browser. */
+  .sheet::after { content: ''; position: absolute; left: -1px; right: -1px; top: 100%; height: var(--bleed); background: #FBFAF4; pointer-events: none; }
+  .grab { flex: 0 0 auto; padding: 6px 16px 12px; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+  .handle { display: block; width: 44px; height: 5px; margin: 2px auto 9px; padding: 0; border: 0; border-radius: 3px; background: rgba(31,35,40,.28); }
+  .handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .peek h2 { margin: 0; font: 600 17px/1.2 'Fraunces', serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .readout { margin-top: 3px; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .readout b { color: var(--fg); font-weight: 600; }
+  .peek-route { display: flex; align-items: center; gap: 8px; min-height: 42px; }
+  .peek-route h2 { margin-right: 4px; }
+  .sheet-body { flex: 0 0 auto; height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+  #body-weather, #body-route { display: flex; flex-direction: column; gap: 12px; padding: 2px 0 18px; }
+  #body-weather > :not(.charts-scroll), #body-route > * { margin-inline: 16px; }
+
+  .hint { font-size: 12px; color: var(--muted); margin-block: 0; }
+  .hint a { color: inherit; }
+  .field {
+    font: inherit; font-size: 16px; color: var(--fg); background: #fff; border: 1px solid rgba(31,35,40,.14);
+    border-radius: 999px; padding: 0 16px; height: 46px; min-width: 0;
+  }
+  .field::placeholder { color: var(--muted); }
+  .push { margin-left: auto; }
+  .rkm { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rkm b { font: 600 20px/1 'JetBrains Mono', monospace; } .rkm small { color: var(--muted); font-size: 12px; }
+  .seg { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(31,35,40,.07); width: fit-content; }
+  .seg .gbtn { height: 40px; min-width: 60px; padding: 0 10px; }
+  .gbtn.tint { background: rgba(31,35,40,.07); }
+  .two { display: flex; gap: 8px; }
+  .two > * { flex: 1 1 0; min-width: 0; height: 50px; gap: 8px; font-size: 15px; font-weight: 600; border-radius: 18px; }
+
+  /* Dagkeuze, tijdschuif en dagdelen */
+  .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-inline: 0 !important; padding: 2px 16px; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: 0 0 auto; height: 36px; padding: 0 13px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap;
+    border: 1px solid rgba(31,35,40,.16); background: #fff; color: var(--muted);
+    transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .chip.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .slider { display: flex; align-items: flex-start; gap: 10px; }
+  .slider .track { flex: 1; min-width: 0; }
+  .slider input[type="range"] { display: block; width: 100%; height: 36px; margin: 0; accent-color: var(--accent); touch-action: pan-y; }
+  .ticks { display: flex; justify-content: space-between; padding: 0 3px; font: 500 10px 'JetBrains Mono', monospace; color: var(--muted); }
+  /* KNMI-waarschuwingen: alleen zichtbaar als er een code geel, oranje of rood is */
+  .warnings { display: flex; flex-direction: column; gap: 6px; }
+  .warn {
+    --wc: #E0A800; padding: 7px 12px 8px; border-radius: 12px; background: #fff;
+    border: 1px solid rgba(31,35,40,.1); border-left: 5px solid var(--wc);
+    font-size: 12px; line-height: 1.35; color: var(--muted);
+  }
+  .warn.orange { --wc: #EE7B1A; }
+  .warn.red { --wc: #D6342C; }
+  .warn-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .warn-head b { color: var(--fg); font-size: 13px; font-weight: 700; }
+  .warn-head .lvl { font-size: 11px; font-weight: 700; color: var(--wc); text-transform: uppercase; letter-spacing: .02em; }
+  .warn.yellow .lvl { color: #8A6A00; }
+  .warn-where { color: var(--fg); }
+  .warn-text { margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .facts { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .facts b { color: var(--fg); font-weight: 600; }
+  .status { font-size: 14px; color: var(--muted); text-align: center; padding: 16px; }
+
+  /* Meldingen */
+  .toast {
+    position: absolute; z-index: 1002; left: 10px; right: 10px; margin-inline: auto; width: fit-content; max-width: min(520px, calc(100% - 20px));
+    top: calc(72px + var(--safe-top)); text-align: center; pointer-events: none;
+    font-size: 13px; padding: 8px 16px; border-radius: 22px;
+    background: rgba(251,250,244,.9); color: var(--fg); border: 1px solid var(--glass-line); box-shadow: var(--shadow);
+  }
+  .toast.toast-error { background: rgba(251,230,218,.95); color: #7a2f0f; }
+  .toast.is-hidden { display: none; }
+
+  /* Routepunten op de kaart */
+  .rpt { width: 14px; height: 14px; border-radius: 50%; background: var(--rust); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+  .rpt.start { background: #2E8B57; } .rpt.end { background: #C0392B; }
+  .leaflet-div-icon.ptwrap { background: none; border: 0; }
+
+  /* Meedraaien met de kijkrichting: de kaart is tijdelijk groter en via CSS gedraaid.
+     Leaflets eigen onderdelen zouden meedraaien, dus die zijn dan verborgen. */
+  #main-map.is-rotating { transition: transform 0.1s linear; }
+  #main-map.is-rotating .leaflet-control-container { visibility: hidden; }
+
+  .sun-marker { filter: drop-shadow(0 0 4px rgba(226,103,42,0.7)); }
+  @keyframes pulse-sun { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+  .sun-marker-icon { animation: pulse-sun 3s ease-in-out infinite; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(31,35,40,0.25); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* Alle grafieken delen één horizontale scroller, met een vaste breedte per uur.
+     overflow-y staat bewust op visible, zodat verticaal scrollen bij het vlak zelf blijft. */
+  .charts-scroll { overflow-x: auto; overflow-y: visible; -webkit-overflow-scrolling: touch; background: #fff; border-block: 1px solid rgba(31,35,40,.08); }
+  .chart-block + .chart-block { margin-top: 4px; }
+  /* De titel ligt binnen de grafiek zelf en kost dus geen eigen regel */
+  .chart-block-title {
+    display: flex; align-items: center; gap: 0.4rem;
+    position: sticky; left: 46px; width: max-content; height: 0; overflow: visible;
+    z-index: 4; pointer-events: none; font-size: 12px; font-weight: 600; line-height: 1.2; transform: translateY(5px);
+  }
+  .chart-block-title .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .chart-block-title .unit { font-size: 11px; font-weight: 500; color: var(--muted); }
+  .chart-block-title .sw { display: inline-block; width: 16px; border-top: 2.5px dashed; margin: 0 2px 0 8px; vertical-align: middle; }
+
+  /* Elke grafiek is een rij: een smalle vaste kolom met de y-waarden (blijft links staan
+     tijdens het scrollen) en daarnaast de grafiek. De waarden worden in JS op de juiste
+     hoogte gezet, zie buildStickyAxisSyncPlugin. */
+  .chart-row { display: flex; align-items: stretch; }
+  .y-axis-sticky { position: sticky; left: 0; z-index: 2; flex: 0 0 40px; width: 40px; background: #fff; }
+  .y-axis-sticky .y-tick {
+    position: absolute; right: 4px; transform: translateY(-50%);
+    font: 500 12px 'JetBrains Mono', monospace; color: #2E3338; white-space: nowrap;
+  }
+  .chart-canvas-wrap { position: relative; height: 250px; flex: 1 1 auto; min-width: 0; }
+  @media (min-width: 640px) { .chart-canvas-wrap { height: 300px; } }
+
+  /* Windrichting per uur, onder de windgrafiek, in dezelfde kolommen als de uren erboven */
+  .wind-dir-wrap { display: grid; flex: 1 1 auto; min-width: 0; }
+  .wind-dir-cell { display: flex; align-items: center; justify-content: center; height: 28px; color: var(--muted); font-size: 11px; }
+  .wind-dir-arrow { display: inline-block; font-size: 17px; line-height: 1; color: var(--fg); }
+</style>
+</head>
+<body>
+
+  <!-- Schermvullende kaart -->
+  <div id="main-map-viewport">
+    <div id="main-map"></div>
+  </div>
+
+  <!-- Koptekst: logo (tik voor een vogelgeluid) en zoekveld -->
+  <header class="top glass">
+    <svg id="logo-icon" width="34" height="34" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Veldkompas">
+      <rect width="64" height="64" rx="15" fill="#1F2328"/>
+      <circle cx="32" cy="32" r="21" fill="none" stroke="#FBFAF4" stroke-width="3"/>
+      <g transform="rotate(28 32 32)">
+        <path d="M32 15 21.5 45 32 38.5Z" fill="#E2672A"/>
+        <path d="M32 15 42.5 45 32 38.5Z" fill="#B84E1B"/>
+      </g>
+    </svg>
+    <form id="search-form" autocomplete="off" role="search">
+      <input id="search-input" type="search" placeholder="Veldkompas · zoek een plek" aria-label="Zoek een plaats of adres" enterkeyhint="search" />
+    </form>
+  </header>
+  <div id="search-results" class="results hidden"></div>
+
+  <!-- Ronde knoppen rechts -->
+  <div id="rail" class="rail">
+    <button id="layer-btn" class="gbtn round glass" title="Kaartlaag wisselen" aria-label="Kaartlaag wisselen">
+      <svg class="i" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/></svg>
+    </button>
+    <button id="gps-btn" class="gbtn round glass" title="Mijn locatie" aria-label="Mijn locatie">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>
+    </button>
+    <button id="orientation-btn" class="gbtn round glass" title="Kaart draait mee met je kijkrichting" aria-label="Kaart meedraaien" aria-pressed="false">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7l2.2 4.8L12 17l-2.2-5.2z"/></svg>
+    </button>
+    <button id="waarneming-btn" class="gbtn round glass" title="Vogelwaarnemingen rond deze plek (Waarneming.nl)" aria-label="Waarneming.nl openen">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="6.5" cy="15.5" r="3.5"/><circle cx="17.5" cy="15.5" r="3.5"/><path d="M10 15.5h4M3.3 14 6 6h3l1 4h4l1-4h3l2.7 8"/></svg>
+    </button>
+    <button id="route-btn" class="gbtn round glass" title="Route tekenen" aria-label="Route tekenen" aria-pressed="false">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="19" r="2.2"/><circle cx="18" cy="5" r="2.2"/><path d="M8 19h7a3.5 3.5 0 0 0 0-7H9a3.5 3.5 0 0 1 0-7h7"/></svg>
+    </button>
+    <div class="zoom glass">
+      <button id="zoom-in" class="gbtn" aria-label="Inzoomen">+</button>
+      <button id="zoom-out" class="gbtn" aria-label="Uitzoomen">&minus;</button>
+    </div>
+  </div>
+
+  <div id="status-banner" class="toast is-hidden" role="status"></div>
+
+  <!-- Het uittrekbare vlak: weer en zon, of de route-bediening tijdens het tekenen -->
+  <section id="sheet" class="sheet" aria-label="Weer en route">
+    <div id="sheet-grab" class="grab">
+      <button id="sheet-handle" class="handle" aria-label="Vlak groter of kleiner maken" aria-expanded="false"></button>
+      <div id="peek-weather" class="peek">
+        <h2 id="location-tag">Kies een plek op de kaart</h2>
+        <div id="readout" class="readout">&nbsp;</div>
+      </div>
+      <div id="peek-route" class="peek peek-route hidden">
+        <h2>Route</h2>
+        <div class="rkm"><b id="r-km">0.00</b> <small>km</small></div>
+        <button id="r-undo" class="gbtn round-s tint push" title="Laatste punt weghalen" aria-label="Laatste punt weghalen">
+          <svg class="i" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+        </button>
+        <button id="r-done" class="gbtn primary" title="Klaar met tekenen">
+          <svg class="i" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg><span>Klaar</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="sheet-body" class="sheet-body">
+      <div id="body-weather">
+        <div id="day-chips" class="chips" role="group" aria-label="Dag"></div>
+        <div class="slider">
+          <button type="button" id="now-btn" class="chip is-active" title="Terug naar dit moment">Nu</button>
+          <div class="track">
+            <input type="range" id="time-slider" min="0" max="1425" step="15" value="720" aria-label="Tijdstip" />
+            <div class="ticks" aria-hidden="true"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+          </div>
+        </div>
+        <div id="warnings" class="warnings hidden" role="region" aria-label="KNMI-waarschuwingen"></div>
+        <div id="day-facts" class="facts"></div>
+        <div id="weather-status" class="status hidden"></div>
+        <div id="weather-charts-scroll" class="charts-scroll hidden">
+          <div id="weather-charts-inner"></div>
+        </div>
+        <p class="hint">Kaart: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap-bijdragers</a>; satellietbeelden © Esri, Maxar, Earthstar Geographics. Verder: Open-Meteo, KNMI-waarschuwingen (via Meteoalarm), SunCalc, Wikimedia Commons (CC BY-SA). Het getij is een modelschatting per uur; gebruik voor navigatie de officiële bron.</p>
+      </div>
+
+      <div id="body-route" class="hidden">
+        <div class="seg" id="r-mode" role="group" aria-label="Tekenmodus">
+          <button type="button" class="gbtn is-active" data-rmode="free" title="Rechte lijnen" aria-label="Rechte lijnen">
+            <svg class="i" viewBox="0 0 24 24"><path d="M4 20l4-1L19 8l-3-3L5 16z"/></svg>
+          </button>
+          <button type="button" class="gbtn" data-rmode="foot" title="Volg wandelpaden" aria-label="Volg wandelpaden">
+            <svg class="i" viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="M12 8l-2 5 3 2 1 5M10 13l-3 1M12 8l3 3 3 1"/></svg>
+          </button>
+          <button type="button" class="gbtn" data-rmode="bike" title="Volg fietsroutes" aria-label="Volg fietsroutes">
+            <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="17" r="3.5"/><circle cx="18" cy="17" r="3.5"/><path d="M6 17l4-8h5l3 8M10 9 8 6H6M12 17l3-8"/></svg>
+          </button>
+        </div>
+        <input type="text" id="r-name" class="field" value="Mijn route" placeholder="Naam van de route" aria-label="Naam van de route">
+        <div class="two">
+          <button id="r-dl" class="gbtn tint" title="Downloaden als GPX">
+            <svg class="i" viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 19h16"/></svg><span>Download</span>
+          </button>
+          <button id="r-clear" class="gbtn tint danger" title="Hele route wissen">
+            <svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Wis</span>
+          </button>
+        </div>
+        <p class="hint">Tik op de kaart voor een punt. Sleep een punt om het te verplaatsen, dubbeltik om het weg te halen.</p>
+      </div>
+    </div>
+  </section>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
+
+  <script>
+  /* =================================================================
+     VELDKOMPAS — application script
+     Organized as:
+       1. Config & constants
+       2. Shared state
+       3. Small utilities (formatting, geometry)
+       4. Map setup & custom icons
+       5. Location acquisition (map click / address search / GPS / orientation-follow)
+       6. Weather & tide (dagkeuze, tijdschuif, dagdelen, uren-grafieken)
+       7. Sun path / azimuth — drawn on the main map
+       8. Bootstrapping
+  ================================================================= */
+
+  // ---------------------------------------------------------------
+  // 1. CONFIG & CONSTANTS
+  // ---------------------------------------------------------------
+  const NL_CENTER = [52.15, 5.29];
+  const DEFAULT_LOCATION = { lat: 51.7654, lon: 4.7717, name: 'De Biesbosch, Noord-Brabant' }; // heart of the national park, a well-known birding wetland
+
+  // Logo easter egg: songs of common Dutch garden/field birds, hotlinked from Wikimedia
+  // Commons (all CC BY-SA, credited in the footer). Special:FilePath is used instead of the
+  // raw upload.wikimedia.org URL since it's the stable, documented redirect Commons itself
+  // provides for linking directly to a file by name.
+  const BIRD_SOUNDS = [
+    { name: 'Merel', url: 'https://commons.wikimedia.org/wiki/Special:FilePath/Turdus_merula.ogg' },
+    { name: 'Roodborst', url: 'https://commons.wikimedia.org/wiki/Special:FilePath/XC27161_-_Roodborst_-_Erithacus_rubecula.ogg' },
+    { name: 'Koolmees', url: 'https://commons.wikimedia.org/wiki/Special:FilePath/Parus_major_song.ogg' },
+    { name: 'Vink', url: 'https://commons.wikimedia.org/wiki/Special:FilePath/XC176182_-_Vink_-_Fringilla_coelebs.ogg' },
+    { name: 'Winterkoning', url: 'https://commons.wikimedia.org/wiki/Special:FilePath/Troglodytes_troglodytes_song.ogg' },
+  ];
+
+  // Het weer wordt in één keer voor deze dagen opgehaald, zodat wisselen van dag of tijd
+  // niets opnieuw hoeft te laden. Het mariene model (getij) reikt minder ver vooruit.
+  const FORECAST_DAYS = 10;
+  const MARINE_DAYS = 7;
+
+  // KNMI-weerwaarschuwingen, per provincie, via de open Meteoalarm-feed van het KNMI.
+  // Alleen code geel, oranje en rood worden getoond; groen ("geen waarschuwing") wordt genegeerd.
+  const WARNING_FEED = 'https://feeds.meteoalarm.org/api/v1/warnings/feeds-netherlands';
+  const WARNING_REFRESH_MS = 10 * 60 * 1000;
+  const WARNING_LEVELS = {
+    yellow: { rank: 1, label: 'Code geel' },
+    orange: { rank: 2, label: 'Code oranje' },
+    red: { rank: 3, label: 'Code rood' },
+  };
+  const WARNING_TYPES = {
+    1: 'Windstoten', 2: 'Sneeuw / gladheid', 3: 'Onweer', 4: 'Mist', 5: 'Hitte', 6: 'Kou',
+    7: 'Kustgevaar', 8: 'Bosbrand', 9: 'Lawines', 10: 'Zware regen', 11: 'Overstroming', 12: 'Regen / hoogwater',
+  };
+  const LAND_PROVINCES = 12;
+
+  // Shared palette: sunrise/sunset colors are reused identically on the map overlay
+  // and (for sunrise) the tide line, per the requested color scheme.
+  const COLORS = {
+    sunrise: '#2E8B57', // green
+    sunset: '#2563AC', // blue
+    current: '#F0A93C', // amber — current sun position
+    temp: '#E2672A', // orange
+    wind: '#111111', // black (shown as windkracht/Beaufort, not raw km/u)
+    rain: '#3E7CB1', // blue (neerslag: regen + buien + sneeuw, mm)
+    cloud: '#B7AE9A', // tan/grey
+    solar: '#D99A1B', // gold — shortwave solar radiation (GHI)
+    tide: '#2E8B57', // green
+    now: '#7C3AED', // purple — marker for the chosen moment on every chart
+  };
+
+  // Chart definitions — one small single-metric chart per factor, stacked in this order.
+  // `key` matches the corresponding array in the day's data. Tide is appended dynamically
+  // only when marine data is available for the chosen location.
+  const CHART_DEFS = [
+    {
+      key: 'temp', label: 'Temperatuur', unit: '°C', color: COLORS.temp,
+      type: 'line', dash: undefined, fill: true, stepped: false,
+      tooltip: (v) => (v == null ? '—' : `${v.toFixed(1)}°C`),
+      extra: { label: 'gevoel', color: '#6B7280', tooltip: (v) => (v == null ? '—' : `${v.toFixed(1)}°C`) },
+    },
+    {
+      key: 'wind', label: 'Windkracht', unit: 'Bft', color: COLORS.wind,
+      type: 'line', dash: undefined, fill: false, stepped: 'before',
+      extra: { label: 'windstoten', color: '#B8860B', tooltip: (v) => (v == null ? '—' : `${v} Bft`) },
+      yMin: 0, yMax: 12,
+      tooltip: (v) => (v == null ? '—' : `${v} Bft — ${BEAUFORT_NAMES[v]}`),
+    },
+    {
+      key: 'precip', label: 'Neerslag', unit: 'mm', color: COLORS.rain,
+      type: 'bar', fill: true,
+      yMin: 0,
+      tooltip: (v) => (v == null ? '—' : `${v.toFixed(1)} mm`),
+    },
+    {
+      key: 'cloud', label: 'Bewolking', unit: '%', color: COLORS.cloud,
+      type: 'line', dash: undefined, fill: true, stepped: false,
+      yMin: 0, yMax: 100,
+      tooltip: (v) => (v == null ? '—' : `${Math.round(v)}%`),
+    },
+    {
+      key: 'solar', label: 'Zonlicht', unit: 'W/m²', color: COLORS.solar,
+      type: 'line', dash: undefined, fill: true, stepped: false,
+      yMin: 0,
+      tooltip: (v) => (v == null ? '—' : `${Math.round(v)} W/m²`),
+    },
+    {
+      key: 'tide', label: 'Getij', unit: 'm t.o.v. gem. zeeniveau', color: COLORS.tide,
+      type: 'line', dash: undefined, fill: false, stepped: false,
+      tooltip: (v) => (v == null ? '—' : `${v.toFixed(2)} m`),
+    },
+  ];
+
+  // Fixed pixel width per hour inside the shared horizontal scroller — the main lever for
+  // mobile readability, since every tick keeps the same generous spacing on any screen
+  // instead of being squeezed to fit a narrow viewport.
+  const PIXELS_PER_HOUR_MOBILE = 54;
+  const PIXELS_PER_HOUR_DESKTOP = 44;
+
+  // Must match the .y-axis-sticky width in CSS — reserved so the sticky y-axis column doesn't
+  // eat into the pxPerHour space meant for the scrolling hourly plot.
+  const Y_AXIS_WIDTH = 40;
+
+  // Upper km/u bound for each Beaufort force 0-11 (12 = anything at or above the last bound).
+  const BEAUFORT_THRESHOLDS_KMH = [1, 6, 12, 20, 29, 39, 50, 62, 75, 89, 103, 118];
+  const BEAUFORT_NAMES = [
+    'Windstil', 'Zwakke wind', 'Zwakke wind', 'Matige wind', 'Matige wind', 'Vrij krachtige wind',
+    'Krachtige wind', 'Harde wind', 'Stormachtig', 'Storm', 'Zware storm', 'Zeer zware storm', 'Orkaan',
+  ];
+
+  // ---------------------------------------------------------------
+  // 2. SHARED STATE
+  // ---------------------------------------------------------------
+  const state = {
+    lat: null,
+    lon: null,
+    locationName: '',
+    mainMap: null,
+    mainMarker: null,
+    baseLayers: null, // { street, satellite } Leaflet tile layers — only one added to the map at a time
+    activeBaseLayer: 'street',
+    sunLayerGroup: null,
+    sheet: 'peek', // stand van het vlak: 'peek' (strook), 'half' of 'full'
+    routeMode: false, // tikken op de kaart voegt een routepunt toe
+    forecast: null, // alle opgehaalde uren voor FORECAST_DAYS dagen
+    weatherRequest: 0, // volgnummer, zodat een traag oud antwoord een nieuwer niet overschrijft
+    dayKeys: [], // 'YYYY-MM-DD' per kiesbare dag, vanaf vandaag
+    dayIndex: 0, // gekozen dag
+    minutes: 720, // gekozen tijdstip op die dag, in minuten na middernacht
+    live: true, // true: het tijdstip volgt de klok ("Nu")
+    dayRaw: null, // de uren van de gekozen dag, zoals de grafieken ze tonen
+    charts: {}, // active Chart.js instances, keyed by CHART_DEFS key
+    sunNowGroup: null, // de zon op het gekozen moment
+    sunArcKey: '', // plek + dag waarvoor de dagboog nu getekend is
+    followingOrientation: false,
+    orientationHandler: null,
+  };
+
+  // ---------------------------------------------------------------
+  // 3. UTILITIES
+  // ---------------------------------------------------------------
+
+  /** Korte melding bovenaan de kaart; verdwijnt vanzelf. */
+  let bannerTimer = null;
+  function showBanner(message, tone = 'info') {
+    const el = document.getElementById('status-banner');
+    el.className = 'toast ' + (tone === 'error' ? 'toast-error' : '');
+    el.textContent = message;
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(hideBanner, tone === 'error' ? 8000 : 4500);
+  }
+  function hideBanner() {
+    document.getElementById('status-banner').className = 'toast is-hidden';
+  }
+
+  /** Whole-hour number for the sun path markers, shown as 1-24 (midnight displayed as 24, never 0). */
+  function hourNumberLabel(date) {
+    const h = date.getHours();
+    return h === 0 ? 24 : h;
+  }
+
+  /** Format a Date as HH:mm (24h, local time). */
+  function formatTime(date) {
+    if (!date || isNaN(date.getTime())) return '—';
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  }
+
+  /** Format a Date as YYYY-MM-DD using LOCAL calendar fields (not UTC — avoids off-by-one-day shifts). */
+  function toISODateLocal(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  /** Parse a YYYY-MM-DD string (as produced by <input type="date">) into a local-midnight Date. */
+  function parseISODateLocal(str) {
+    const [y, m, d] = str.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  /** Today at local midnight (used as the default/minimum for the date picker). */
+  function todayLocalMidnight() {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  }
+
+  /** Convert a wind speed in km/u to a Beaufort force (0-12). */
+  function windSpeedToBeaufort(kmh) {
+    for (let b = 0; b < BEAUFORT_THRESHOLDS_KMH.length; b++) {
+      if (kmh < BEAUFORT_THRESHOLDS_KMH[b]) return b;
+    }
+    return 12;
+  }
+
+  /** 16-punts windroos (NL-afkortingen) voor een windrichting in graden — de richting
+   *  waar de wind vandaan komt, volgens de standaard meteorologische conventie (net als
+   *  Open-Meteo's wind_direction_10m en hoe KNMI/Buienradar "windrichting" rapporteren). */
+  const COMPASS_POINTS_NL = ['N', 'NNO', 'NO', 'ONO', 'O', 'OZO', 'ZO', 'ZZO', 'Z', 'ZZW', 'ZW', 'WZW', 'W', 'WNW', 'NW', 'NNW'];
+  function degreesToCompassNL(deg) {
+    if (deg == null || isNaN(deg)) return '—';
+    const idx = Math.round(deg / 22.5) % 16;
+    return COMPASS_POINTS_NL[idx];
+  }
+
+  /** Great-circle destination point given a start coord, bearing (deg) and distance (km). */
+  function destinationPoint(lat, lon, bearingDeg, distanceKm) {
+    const R = 6371;
+    const brng = (bearingDeg * Math.PI) / 180;
+    const lat1 = (lat * Math.PI) / 180;
+    const lon1 = (lon * Math.PI) / 180;
+    const lat2 = Math.asin(
+      Math.sin(lat1) * Math.cos(distanceKm / R) + Math.cos(lat1) * Math.sin(distanceKm / R) * Math.cos(brng)
+    );
+    const lon2 =
+      lon1 +
+      Math.atan2(
+        Math.sin(brng) * Math.sin(distanceKm / R) * Math.cos(lat1),
+        Math.cos(distanceKm / R) - Math.sin(lat1) * Math.sin(lat2)
+      );
+    return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI];
+  }
+
+  /** Convert SunCalc's azimuth (radians, 0 = south, clockwise toward west) to a compass bearing (0-360, 0 = north). */
+  function azimuthToCompassBearing(azimuthRad) {
+    const deg = (azimuthRad * 180) / Math.PI + 180;
+    return (deg + 360) % 360;
+  }
+
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+  const $id = (id) => document.getElementById(id);
+
+  /** Getal met één decimaal en een komma, zoals in het Nederlands gebruikelijk. */
+  function nl1(v) { return v.toLocaleString('nl-NL', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+
+  /** Het moment waar alles naar kijkt: de klok ("Nu"), of de gekozen dag en tijd. */
+  function viewTime() {
+    if (state.live || !state.dayKeys.length) return new Date();
+    const d = parseISODateLocal(state.dayKeys[state.dayIndex]);
+    d.setMinutes(state.minutes);
+    return d;
+  }
+
+  /** Maakt tekst van buiten (zoals plaatsnamen) veilig om in HTML te zetten. */
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---------------------------------------------------------------
+  // 4. MAP SETUP & CUSTOM ICONS
+  // ---------------------------------------------------------------
+
+  function buildLocationIcon() {
+    return L.divIcon({
+      className: '',
+      html: `<div style="width:22px;height:22px;border-radius:50%;background:#D95B22;border:3px solid #FBFAF4;box-shadow:0 0 0 2px rgba(31,35,40,0.35), 0 2px 6px rgba(0,0,0,0.35);"></div>`,
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+    });
+  }
+
+  function buildSunIcon(aboveHorizon) {
+    const glyph = aboveHorizon ? '☀' : '🌙';
+    return L.divIcon({
+      className: 'sun-marker',
+      html: `<div class="sun-marker-icon" style="font-size:20px; line-height:1;">${glyph}</div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
+    });
+  }
+
+  function buildHourIcon(hourNumber) {
+    return L.divIcon({
+      className: '',
+      html: `<div style="font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;color:#1F2328;background:rgba(251,250,244,0.88);border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(0,0,0,0.25);">${hourNumber}</div>`,
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    });
+  }
+
+  function initMaps() {
+    // Schermvullende kaart. Aanraking (tik, slepen, knijpen) werkt via Leaflets eigen handlers.
+    state.mainMap = L.map('main-map', { zoomControl: false, attributionControl: false }).setView(NL_CENTER, 7);
+
+    state.baseLayers = {
+      street: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap-bijdragers',
+        maxZoom: 19,
+      }),
+      satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Satellietbeelden &copy; Esri, Maxar, Earthstar Geographics',
+        maxZoom: 19,
+      }),
+      // Plaatsnamen en wegen als laag bovenop de satelliet, zoals op de straatkaart.
+      // Esri-labels zonder API-key (CARTO eist sinds kort een key en toonde "API key required").
+      satelliteLabels: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Labels &copy; Esri',
+        maxNativeZoom: 18,
+        maxZoom: 19,
+      }),
+    };
+    let startLayer = 'street';
+    try {
+      const saved = localStorage.getItem('veldkompas-layer');
+      if (saved && LAYER_ORDER.indexOf(saved) >= 0) startLayer = saved;
+    } catch (e) {}
+    state.baseLayers[startLayer].addTo(state.mainMap);
+    if (startLayer === 'satellite') state.baseLayers.satelliteLabels.addTo(state.mainMap);
+    state.activeBaseLayer = startLayer;
+
+    state.sunLayerGroup = L.layerGroup().addTo(state.mainMap);
+
+    state.mainMap.on('click', (e) => {
+      if (state.followingOrientation) {
+        // Terwijl de kaart via CSS gedraaid is, klopt Leaflets klik-positie niet meer.
+        // Daarom staat kiezen en tekenen op de kaart stil tot Oriëntatie weer uit staat.
+        showBanner('Zet meedraaien uit om op de kaart te kiezen of te tekenen.', 'info');
+        return;
+      }
+      closeSearch();
+      if (state.routeMode) {
+        routeApi.addPoint(e.latlng);
+        return;
+      }
+      onLocationSelected(e.latlng.lat, e.latlng.lng, null);
+    });
+
+    initMapLayerToggle();
+  }
+
+  /** Hoeveel het zichtbare midden van de kaart (tussen koptekst en vlak) onder het echte midden ligt. */
+  function visibleCenterOffset() {
+    const H = window.innerHeight;
+    const top = 66;
+    const h = sheetHeights();
+    let bottom = H - (state.sheet === 'full' ? h.half : h[state.sheet]);
+    bottom = Math.max(bottom, top + 80);
+    return (top + bottom) / 2 - H / 2;
+  }
+  function flyToVisible(lat, lon, zoom) {
+    const map = state.mainMap;
+    const dy = visibleCenterOffset();
+    const p = map.project([lat, lon], zoom).subtract([0, dy]);
+    map.flyTo(map.unproject(p, zoom), zoom, { duration: 0.6 });
+  }
+  function revealMarker() {
+    if (state.lat === null) return;
+    const map = state.mainMap;
+    const z = map.getZoom();
+    const p = map.project([state.lat, state.lon], z).subtract([0, visibleCenterOffset()]);
+    map.panTo(map.unproject(p, z), { animate: true, duration: 0.35 });
+  }
+
+  /** Eén ronde knop wisselt tussen straatkaart en satelliet. */
+  const LAYER_ORDER = ['street', 'satellite'];
+  const LAYER_NAMES = { street: 'Straatkaart', satellite: 'Satelliet' };
+  function initMapLayerToggle() {
+    document.getElementById('layer-btn').addEventListener('click', () => {
+      const next = LAYER_ORDER[(LAYER_ORDER.indexOf(state.activeBaseLayer) + 1) % LAYER_ORDER.length];
+      state.mainMap.removeLayer(state.baseLayers[state.activeBaseLayer]);
+      if (state.activeBaseLayer === 'satellite') state.mainMap.removeLayer(state.baseLayers.satelliteLabels);
+      state.baseLayers[next].addTo(state.mainMap);
+      if (next === 'satellite') state.baseLayers.satelliteLabels.addTo(state.mainMap);
+      state.activeBaseLayer = next;
+      try { localStorage.setItem('veldkompas-layer', next); } catch (e) {}
+      showBanner(LAYER_NAMES[next], 'info');
+    });
+    document.getElementById('zoom-in').addEventListener('click', () => state.mainMap.zoomIn());
+    document.getElementById('zoom-out').addEventListener('click', () => state.mainMap.zoomOut());
+  }
+
+  // ---------------------------------------------------------------
+  // 4b. HET UITTREKBARE VLAK (weer, of de route-bediening tijdens het tekenen)
+  // ---------------------------------------------------------------
+  const routeApi = {};
+
+  /** Zichtbare hoogte van het vlak per stand. Tijdens het tekenen is 'half' precies hoog
+   *  genoeg voor de route-bediening en bestaat er geen hogere stand. */
+  function sheetHeights() {
+    const el = $id('sheet');
+    const total = el.offsetHeight;
+    const safe = parseFloat(getComputedStyle(el).scrollPaddingBottom) || 0;
+    const grab = $id('sheet-grab').offsetHeight;
+    const peek = Math.min(total, grab + safe);
+    const half = state.routeMode
+      ? Math.min(total, grab + $id('body-route').offsetHeight + safe)
+      // Half scherm, maar op een laag scherm niet tot over de ronde knoppen rechts.
+      : Math.min(total, Math.max(peek + 140, Math.min(Math.round(window.innerHeight * 0.5), window.innerHeight - $id('rail').getBoundingClientRect().bottom - 10)));
+    return { peek, half, full: state.routeMode ? half : total, total, grab, safe };
+  }
+
+  /** Zet het vlak in de stand van state.sheet. */
+  function applySheet(animate = true) {
+    const el = $id('sheet');
+    const h = sheetHeights();
+    const visible = h[state.sheet];
+    el.style.transition = animate ? '' : 'none';
+    el.style.transform = `translateY(${h.total - visible}px)`;
+    const body = $id('sheet-body');
+    body.style.height = Math.max(0, visible - h.grab - h.safe) + 'px';
+    body.inert = state.sheet === 'peek'; // ingeklapt: inhoud niet bereikbaar met Tab
+    document.body.classList.toggle('sheet-full', state.sheet === 'full' && !state.routeMode);
+    $id('sheet-handle').setAttribute('aria-expanded', String(state.sheet !== 'peek'));
+  }
+
+  function setSheet(name) {
+    state.sheet = name;
+    applySheet();
+    if (name !== 'full') setTimeout(revealMarker, 300);
+  }
+
+  /** Toont in het vlak het weer, of tijdens het tekenen de route-bediening. */
+  function syncMode() {
+    const on = state.routeMode;
+    $id('peek-weather').classList.toggle('hidden', on);
+    $id('body-weather').classList.toggle('hidden', on);
+    $id('peek-route').classList.toggle('hidden', !on);
+    $id('body-route').classList.toggle('hidden', !on);
+    const btn = $id('route-btn');
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-pressed', String(on));
+    $id('main-map-viewport').classList.toggle('is-drawing', on);
+  }
+
+  /** Tekenen aan of uit. Aan: het vlak toont de route-bediening. Uit: terug naar het weer. */
+  function setDrawing(on) {
+    state.routeMode = on;
+    syncMode();
+    setSheet(on ? 'half' : 'peek');
+  }
+
+  /** Slepen aan de bovenrand van het vlak, of erop tikken om het te openen en te sluiten. */
+  function initSheet() {
+    const el = $id('sheet');
+    const grab = $id('sheet-grab');
+    const body = $id('sheet-body');
+    const ORDER = ['peek', 'half', 'full'];
+    let drag = null;
+    const currentY = () => new DOMMatrixReadOnly(getComputedStyle(el).transform).m42;
+    const toggle = () => setSheet(state.sheet === 'peek' ? 'half' : (state.sheet === 'full' ? 'half' : 'peek'));
+
+    grab.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button:not(.handle)')) return; // knoppen in de strook werken gewoon
+      drag = { id: e.pointerId, y0: e.clientY, t0: currentY(), moved: false, h: sheetHeights() };
+      grab.setPointerCapture(e.pointerId);
+    });
+    grab.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dy = e.clientY - drag.y0;
+      if (Math.abs(dy) > 6) drag.moved = true;
+      if (!drag.moved) return;
+      const h = drag.h;
+      const t = clamp(drag.t0 + dy, h.total - h.full, h.total - h.peek);
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${t}px)`;
+      body.style.height = Math.max(0, h.total - t - h.grab - h.safe) + 'px';
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const d = drag;
+      drag = null;
+      if (!d.moved) { toggle(); return; }
+      // Dichtstbijzijnde stand; een duidelijke veeg gaat minstens één stand verder.
+      const visible = d.h.total - currentY();
+      let best = ORDER.reduce((a, b) => (Math.abs(d.h[b] - visible) < Math.abs(d.h[a] - visible) ? b : a));
+      const dy = e.clientY - d.y0;
+      if (best === state.sheet && Math.abs(dy) > 40) {
+        best = ORDER[clamp(ORDER.indexOf(best) + (dy < 0 ? 1 : -1), 0, state.routeMode ? 1 : 2)];
+      }
+      if (state.routeMode && best === 'full') best = 'half';
+      setSheet(best);
+    };
+    grab.addEventListener('pointerup', end);
+    grab.addEventListener('pointercancel', end);
+    // Toetsenbord: Enter of spatie op de greep (een muisklik is hierboven al afgehandeld).
+    $id('sheet-handle').addEventListener('click', (e) => { if (e.detail === 0) toggle(); });
+
+    $id('route-btn').addEventListener('click', () => {
+      if (!state.routeMode) setDrawing(true);
+      else setSheet(state.sheet === 'peek' ? 'half' : 'peek');
+    });
+    $id('r-done').addEventListener('click', () => { setDrawing(false); showBanner('Klaar met tekenen.', 'info'); });
+    window.addEventListener('resize', () => applySheet(false));
+  }
+
+  // ---------------------------------------------------------------
+  // 4c. ROUTE TEKENEN EN GPX (uit GPX Tekenaar)
+  // ---------------------------------------------------------------
+  function initRoute() {
+    const map = state.mainMap;
+    const $ = (id) => document.getElementById(id);
+    let pts = []; // { ll, marker }
+    let segs = []; // segs[i] = punten tussen pts[i] en pts[i+1]
+    let mode = 'free';
+    try {
+      const sm = localStorage.getItem('veldkompas-route-mode');
+      if (['free', 'foot', 'bike'].indexOf(sm) >= 0) mode = sm;
+    } catch (e) {}
+
+    const line = L.polyline([], { color: '#E2672A', weight: 5, opacity: 0.9 }).addTo(map);
+
+    function iconFor(cls) {
+      return L.divIcon({ className: 'ptwrap', html: '<div class="rpt ' + cls + '"></div>', iconSize: [14, 14], iconAnchor: [7, 7] });
+    }
+    function straight(a, b) { return [a.ll, b.ll]; }
+
+    function fullPath() {
+      if (pts.length === 1) return [pts[0].ll];
+      const out = [];
+      segs.forEach((s) => s.forEach((p, k) => { if (out.length && k === 0) return; out.push(p); }));
+      return out;
+    }
+
+    function refresh() {
+      pts.forEach((p, i) => {
+        p.marker.setIcon(iconFor(i === 0 ? 'start' : (i === pts.length - 1 && pts.length > 1 ? 'end' : '')));
+      });
+      const path = fullPath();
+      line.setLatLngs(path);
+      let d = 0;
+      for (let i = 1; i < path.length; i++) d += path[i - 1].distanceTo(path[i]);
+      $('r-km').textContent = (d / 1000).toFixed(2);
+      persist();
+    }
+
+    function fetchSeg(i) {
+      const a = pts[i], b = pts[i + 1];
+      segs[i] = straight(a, b);
+      if (mode === 'free') return;
+      const base = mode === 'bike' ? 'routed-bike' : 'routed-foot';
+      const url = 'https://routing.openstreetmap.de/' + base + '/route/v1/driving/' +
+        a.ll.lng + ',' + a.ll.lat + ';' + b.ll.lng + ',' + b.ll.lat + '?overview=full&geometries=geojson';
+      fetch(url).then((r) => r.json()).then((j) => {
+        if (!j.routes || !j.routes[0]) throw new Error('geen route');
+        if (pts[i] !== a || pts[i + 1] !== b) return; // ondertussen veranderd
+        segs[i] = j.routes[0].geometry.coordinates.map((c) => L.latLng(c[1], c[0]));
+        refresh();
+      }).catch(() => { if (pts[i] === a && pts[i + 1] === b) showBanner('Geen route gevonden, rechte lijn gebruikt.', 'info'); });
+    }
+
+    function makePoint(ll) {
+      const p = { ll };
+      p.marker = L.marker(ll, { draggable: true, icon: iconFor(''), keyboard: false }).addTo(map);
+      p.marker.on('drag', (e) => {
+        p.ll = e.target.getLatLng();
+        const i = pts.indexOf(p);
+        if (i > 0) segs[i - 1] = straight(pts[i - 1], p);
+        if (i < pts.length - 1) segs[i] = straight(p, pts[i + 1]);
+        line.setLatLngs(fullPath());
+      });
+      p.marker.on('dragend', () => {
+        const i = pts.indexOf(p);
+        if (i > 0) fetchSeg(i - 1);
+        if (i < pts.length - 1) fetchSeg(i);
+        refresh();
+      });
+      p.marker.on('dblclick contextmenu', (e) => { L.DomEvent.stop(e); removePoint(p); });
+      return p;
+    }
+
+    function addPoint(ll) {
+      pts.push(makePoint(ll));
+      if (pts.length > 1) fetchSeg(pts.length - 2);
+      refresh();
+    }
+    routeApi.addPoint = addPoint;
+
+    function removePoint(p) {
+      const i = pts.indexOf(p);
+      if (i < 0) return;
+      map.removeLayer(p.marker);
+      pts.splice(i, 1);
+      // Alleen de stukken rond het weggehaalde punt veranderen; de rest blijft staan.
+      if (i === pts.length) segs.splice(i - 1, 1); // laatste punt
+      else if (i === 0) segs.splice(0, 1); // eerste punt
+      else { segs.splice(i - 1, 2, straight(pts[i - 1], pts[i])); fetchSeg(i - 1); }
+      refresh();
+    }
+    function clearAll() {
+      pts.forEach((p) => map.removeLayer(p.marker));
+      pts = []; segs = [];
+      refresh();
+    }
+
+    map.doubleClickZoom.disable();
+
+    $('r-undo').addEventListener('click', () => { if (pts.length) removePoint(pts[pts.length - 1]); });
+    $('r-clear').addEventListener('click', clearAll);
+
+    const modeBtns = Array.from(document.querySelectorAll('#r-mode [data-rmode]'));
+    function showMode() { modeBtns.forEach((b) => b.classList.toggle('is-active', b.dataset.rmode === mode)); }
+    modeBtns.forEach((b) => b.addEventListener('click', () => {
+      mode = b.dataset.rmode;
+      try { localStorage.setItem('veldkompas-route-mode', mode); } catch (e) {}
+      showMode();
+      showBanner(mode === 'free' ? 'Rechte lijnen' : (mode === 'foot' ? 'Volgt wandelpaden' : 'Volgt fietsroutes'), 'info');
+    }));
+    showMode();
+
+    // ----- GPX maken (altijd als track, zodat Organic Maps hem direct inleest) -----
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
+    }
+    function buildGpx() {
+      const name = esc($('r-name').value || 'Route');
+      let x = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Veldkompas" xmlns="http://www.topografix.com/GPX/1/1">\n' +
+        '  <metadata><name>' + name + '</name><time>' + new Date().toISOString() + '</time></metadata>\n' +
+        '  <trk>\n    <name>' + name + '</name>\n    <trkseg>\n';
+      fullPath().forEach((p) => { x += '      <trkpt lat="' + p.lat.toFixed(6) + '" lon="' + p.lng.toFixed(6) + '"/>\n'; });
+      return x + '    </trkseg>\n  </trk>\n</gpx>\n';
+    }
+    function fileName() {
+      return (($('r-name').value || 'route').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'route') + '.gpx';
+    }
+    function ready() {
+      if (pts.length < 2) { showBanner('Teken eerst minstens twee punten.', 'info'); return false; }
+      return true;
+    }
+    // Een iPhone opent bestanden met een XML-type (zoals application/gpx+xml) in de Podcasts-app.
+    // Daarom gaat het bestand als "application/octet-stream" met de naam .gpx, zodat iOS op de
+    // extensie afgaat en Organic Maps het herkent.
+    function saveFile() {
+      const fn = fileName();
+      const blob = new Blob([buildGpx()], { type: 'application/octet-stream' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = fn;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      showBanner(isTouch ? 'Bewaard als ' + fn + '. Open het in Bestanden en kies Organic Maps.' : 'Gedownload als ' + fn, 'info');
+    }
+    function shareFileOrNull() {
+      if (!navigator.share || !navigator.canShare) return null;
+      const xml = buildGpx(), fn = fileName();
+      for (const t of ['application/octet-stream', 'application/gpx+xml', 'text/xml']) {
+        try {
+          const f = new File([xml], fn, { type: t });
+          if (navigator.canShare({ files: [f] })) return f;
+        } catch (e) {}
+      }
+      return null;
+    }
+    const isTouch = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+    function download() {
+      if (!ready()) return;
+      // Op telefoon: deelmenu met Organic Maps, Bestanden enz. Lukt dat niet, dan gewoon bewaren.
+      if (isTouch) {
+        const f = shareFileOrNull();
+        if (f) {
+          navigator.share({ files: [f] }).catch((err) => { if (!err || err.name !== 'AbortError') saveFile(); });
+          return;
+        }
+      }
+      saveFile();
+    }
+    $('r-dl').addEventListener('click', download);
+
+    // ----- Onthouden in de browser -----
+    function persist() {
+      try {
+        const r5 = (v) => Math.round(v * 1e5) / 1e5;
+        localStorage.setItem('veldkompas-route', JSON.stringify({
+          pts: pts.map((p) => [p.ll.lat, p.ll.lng]),
+          segs: segs.map((sg) => sg.map((q) => [r5(q.lat), r5(q.lng)])),
+          name: $('r-name').value,
+        }));
+      } catch (e) {}
+    }
+    $('r-name').addEventListener('input', persist);
+    try {
+      const s = JSON.parse(localStorage.getItem('veldkompas-route') || 'null');
+      if (s && s.pts && s.pts.length) {
+        s.pts.forEach((c) => pts.push(makePoint(L.latLng(c[0], c[1]))));
+        // Bewaarde stukken (ook de gevolgde paden) terugzetten; ontbreken ze, dan rechte lijnen.
+        for (let i = 0; i < pts.length - 1; i++) {
+          const saved = s.segs && s.segs[i];
+          segs[i] = saved && saved.length >= 2 ? saved.map((c) => L.latLng(c[0], c[1])) : straight(pts[i], pts[i + 1]);
+        }
+        if (s.name) $('r-name').value = s.name;
+        refresh();
+      }
+    } catch (e) {}
+  }
+
+  // ---------------------------------------------------------------
+  // 5. LOCATION ACQUISITION
+  // ---------------------------------------------------------------
+
+  /** Central entry point: called whenever the user picks a new location, by any method. */
+  async function onLocationSelected(lat, lon, label) {
+    hideBanner();
+    state.lat = lat;
+    state.lon = lon;
+    state.locationName = label || `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
+
+    updateLocationTag();
+
+    // Place / move the marker on the main map.
+    if (state.mainMarker) {
+      state.mainMarker.setLatLng([lat, lon]);
+    } else {
+      state.mainMarker = L.marker([lat, lon], { icon: buildLocationIcon() }).addTo(state.mainMap);
+    }
+    flyToVisible(lat, lon, Math.max(state.mainMap.getZoom(), 13));
+
+    // If we only have coordinates (map click / GPS), try to resolve a friendly name in the background.
+    if (!label) reverseGeocode(lat, lon);
+
+    fetchWeatherAndTide(lat, lon);
+    updateTimeViews(); // zon op de kaart meteen; de weerwaarden volgen zodra ze binnen zijn
+  }
+
+  function updateLocationTag() {
+    const tag = document.getElementById('location-tag');
+    tag.textContent = state.locationName;
+  }
+
+  async function reverseGeocode(lat, lon) {
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=14&addressdetails=1`;
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      const a = data.address || {};
+      const place = a.village || a.town || a.city || a.hamlet || a.suburb || a.municipality || data.name;
+      if (place && state.lat === lat && state.lon === lon) {
+        state.locationName = a.state ? `${place}, ${a.state}` : place;
+        updateLocationTag();
+      }
+    } catch (err) {
+      // Silent: reverse geocoding is a nicety, not critical to app function.
+      console.warn('Reverse geocoding mislukt:', err);
+    }
+  }
+
+  function closeSearch() {
+    const box = $id('search-results');
+    box.classList.add('hidden');
+    box.innerHTML = '';
+  }
+
+  /** Zoeken via Nominatim, binnen Nederland. Bij meer treffers verschijnt een keuzelijst onder het zoekveld. */
+  function initAddressSearch() {
+    const form = $id('search-form');
+    const input = $id('search-input');
+    const resultsBox = $id('search-results');
+
+    function select(match) {
+      const shortName = match.display_name.split(',').slice(0, 2).join(',').trim();
+      input.value = '';
+      input.blur();
+      closeSearch();
+      onLocationSelected(parseFloat(match.lat), parseFloat(match.lon), shortName);
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      if (!query || form.classList.contains('is-busy')) return;
+      hideBanner();
+      closeSearch();
+      form.classList.add('is-busy');
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=nl&addressdetails=1&q=${encodeURIComponent(query)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Nominatim antwoordde met status ' + res.status);
+        const matches = await res.json();
+        if (!matches.length) { showBanner(`Niets gevonden voor "${query}" in Nederland.`, 'error'); return; }
+        if (matches.length === 1) { select(matches[0]); return; }
+        resultsBox.innerHTML = matches.map((m, i) => `<button type="button" data-idx="${i}">${escapeHtml(m.display_name)}</button>`).join('');
+        resultsBox.classList.remove('hidden');
+        resultsBox.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => select(matches[Number(b.dataset.idx)])));
+      } catch (err) {
+        console.error(err);
+        showBanner('Zoeken is mislukt. Controleer je verbinding.', 'error');
+      } finally {
+        form.classList.remove('is-busy');
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!form.contains(e.target) && !resultsBox.contains(e.target)) closeSearch();
+    });
+  }
+
+  /** GPS location via the browser Geolocation API. */
+  function initGpsButton() {
+    const btn = document.getElementById('gps-btn');
+    btn.addEventListener('click', () => {
+      if (!('geolocation' in navigator)) {
+        showBanner('Deze browser kan je locatie niet bepalen.', 'error');
+        return;
+      }
+      hideBanner();
+      btn.disabled = true;
+      btn.classList.add('is-busy');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          btn.disabled = false;
+          btn.classList.remove('is-busy');
+          onLocationSelected(pos.coords.latitude, pos.coords.longitude, null);
+        },
+        (err) => {
+          btn.disabled = false;
+          btn.classList.remove('is-busy');
+          const messages = {
+            1: 'Geen toegang tot je locatie. Sta dit toe in je browserinstellingen.',
+            2: 'Je locatie is niet te bepalen. Kies een plek op de kaart.',
+            3: 'Je locatie bepalen duurde te lang. Probeer het opnieuw.',
+          };
+          showBanner(messages[err.code] || 'Kon je locatie niet bepalen.', 'error');
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    });
+  }
+
+  /**
+   * "Oriëntatie" toggle: rotates the map to match the phone's compass heading, using
+   * the Device Orientation API (gyroscope/magnetometer). Leaflet itself has no concept
+   * of map rotation, so this applies a CSS transform to a deliberately oversized map
+   * layer (cropped by an overflow-hidden viewport) so no blank corners appear while
+   * rotated. Because Leaflet's hit-testing isn't rotation-aware, dragging and
+   * click-to-select are paused while this mode is active — the view stays centered
+   * and simply turns in place, similar to "follow" mode in dedicated navigation apps.
+   * Compass-heading accuracy varies a lot by device/OS/browser; some Android phones
+   * need a figure-eight calibration gesture, and desktop browsers have no sensor at all.
+   */
+  function initOrientationButton() {
+    const btn = document.getElementById('orientation-btn');
+    btn.addEventListener('click', () => {
+      if (state.followingOrientation) {
+        disableOrientationMode();
+      } else {
+        enableOrientationMode(btn);
+      }
+    });
+  }
+
+  async function enableOrientationMode(btn) {
+    if (typeof window.DeviceOrientationEvent === 'undefined') {
+      showBanner('Meedraaien werkt alleen op een toestel met kompas.', 'error');
+      return;
+    }
+    // iOS 13+ requires an explicit permission prompt, and it must be triggered
+    // directly from a user gesture — this click handler qualifies.
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const result = await DeviceOrientationEvent.requestPermission();
+        if (result !== 'granted') {
+          showBanner('Geen toegang tot het kompas. Sta dit toe in je browserinstellingen.', 'error');
+          return;
+        }
+      } catch (err) {
+        showBanner('Het kompas is op dit toestel niet beschikbaar.', 'error');
+        return;
+      }
+    }
+
+    state.followingOrientation = true;
+    btn.classList.add('is-active');
+    btn.setAttribute('aria-pressed', 'true');
+    showBanner('De kaart draait mee. Tik nogmaals op de knop om te stoppen.', 'info');
+    state.mainMap.dragging.disable();
+
+    const mapEl = document.getElementById('main-map');
+    mapEl.style.width = '160%';
+    mapEl.style.height = '160%';
+    mapEl.style.left = '-30%';
+    mapEl.style.top = '-30%';
+    mapEl.classList.add('is-rotating');
+    requestAnimationFrame(() => state.mainMap.invalidateSize({ animate: false }));
+
+    let lastUpdate = 0;
+    state.orientationHandler = (e) => {
+      const now = Date.now();
+      if (now - lastUpdate < 100) return; // throttle to ~10fps — smooth enough, avoids layout thrash
+      let heading = null;
+      if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+        heading = e.webkitCompassHeading; // iOS Safari: already a true compass heading, clockwise from north
+      } else if (typeof e.alpha === 'number') {
+        // Android/other browsers: 'alpha' increases counter-clockwise from an arbitrary
+        // (or, when the event is "absolute", roughly north-referenced) start angle —
+        // invert it for a clockwise-from-north heading. Best-effort; not all devices agree.
+        heading = 360 - e.alpha;
+      }
+      if (heading === null || isNaN(heading)) return;
+      lastUpdate = now;
+      heading = (heading + 360) % 360;
+      mapEl.style.transform = `rotate(${-heading}deg)`;
+    };
+    window.addEventListener('deviceorientationabsolute', state.orientationHandler, true);
+    window.addEventListener('deviceorientation', state.orientationHandler, true);
+  }
+
+  function disableOrientationMode() {
+    state.followingOrientation = false;
+    const btn = document.getElementById('orientation-btn');
+    btn.classList.remove('is-active');
+    btn.setAttribute('aria-pressed', 'false');
+
+    if (state.orientationHandler) {
+      window.removeEventListener('deviceorientationabsolute', state.orientationHandler, true);
+      window.removeEventListener('deviceorientation', state.orientationHandler, true);
+      state.orientationHandler = null;
+    }
+    state.mainMap.dragging.enable();
+
+    const mapEl = document.getElementById('main-map');
+    mapEl.style.transform = '';
+    mapEl.style.width = '';
+    mapEl.style.height = '';
+    mapEl.style.left = '';
+    mapEl.style.top = '';
+    mapEl.classList.remove('is-rotating');
+    requestAnimationFrame(() => state.mainMap.invalidateSize({ animate: false }));
+  }
+
+  /** "Waarneming.nl" button: waarneming.nl's own search API requires authentication, so rather
+   *  than pull records into the page, this opens their public explore page in a new tab —
+   *  pre-filled with the current location, a 2 km radius, vogels-only (species_group=1), and
+   *  the day currently chosen in the weather panel. */
+  function initWaarnemingButton() {
+    const btn = document.getElementById('waarneming-btn');
+    btn.addEventListener('click', () => {
+      if (state.lat === null || state.lon === null) {
+        showBanner('Kies eerst een plek op de kaart.', 'info');
+        return;
+      }
+      const dateStr = state.dayKeys[state.dayIndex];
+      const point = `POINT(${state.lon}%20${state.lat})`;
+      const url =
+        `https://waarneming.nl/fieldwork/observations/explore/?end_date=${dateStr}&exclude_own=true` +
+        `&point=${point}&distance=2#search=&species_group=1&rarity=0`;
+      window.open(url, '_blank', 'noopener');
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 6. WEATHER & TIDE — dagkeuze, tijdschuif, dagdelen en uren-grafieken
+  // ---------------------------------------------------------------
+
+  /** Haalt in één keer alle uren op voor de kiesbare dagen. */
+  async function fetchWeatherAndTide(lat, lon) {
+    const statusEl = $id('weather-status');
+    const request = ++state.weatherRequest;
+    state.forecast = null;
+    renderDay();
+    statusEl.textContent = 'Verwachting laden…';
+    statusEl.classList.remove('hidden');
+
+    const startStr = state.dayKeys[0];
+    const forecastUrl =
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&hourly=temperature_2m,apparent_temperature,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m,cloud_cover,shortwave_radiation` +
+      `&start_date=${startStr}&end_date=${state.dayKeys[FORECAST_DAYS - 1]}&timezone=auto`;
+    const marineUrl =
+      `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}` +
+      `&hourly=sea_level_height_msl&start_date=${startStr}&end_date=${state.dayKeys[MARINE_DAYS - 1]}&timezone=auto`;
+
+    try {
+      const [forecastRes, marineRes] = await Promise.allSettled([fetch(forecastUrl), fetch(marineUrl)]);
+      if (request !== state.weatherRequest) return; // intussen is iets anders gekozen
+      if (forecastRes.status !== 'fulfilled' || !forecastRes.value.ok) throw new Error('Weerdata kon niet worden opgehaald.');
+      const hourly = (await forecastRes.value.json()).hourly;
+
+      // Getij: opzoektabel per tijdstip, zodat een ontbrekende of kortere mariene reeks geen probleem is.
+      const tideByTime = {};
+      if (marineRes.status === 'fulfilled' && marineRes.value.ok) {
+        try {
+          const m = (await marineRes.value.json()).hourly;
+          if (m && m.sea_level_height_msl) m.time.forEach((t, i) => { if (m.sea_level_height_msl[i] != null) tideByTime[t] = m.sea_level_height_msl[i]; });
+        } catch (e) {
+          console.warn('Marien antwoord kon niet worden verwerkt:', e);
+        }
+      }
+      if (request !== state.weatherRequest) return;
+
+      const bft = (arr) => (arr ? arr.map((v) => (v == null ? null : windSpeedToBeaufort(v))) : null);
+      const tide = hourly.time.map((t) => (tideByTime[t] !== undefined ? tideByTime[t] : null));
+      state.forecast = {
+        timeStrings: hourly.time,
+        times: hourly.time.map((t) => new Date(t)),
+        temps: hourly.temperature_2m,
+        feels: hourly.apparent_temperature || null, // tweede lijn in de temperatuurgrafiek
+        precip: hourly.precipitation, // regen + buien + sneeuw, in mm
+        wind: hourly.wind_speed_10m,
+        windBft: bft(hourly.wind_speed_10m),
+        gustBft: bft(hourly.wind_gusts_10m), // tweede lijn in de windgrafiek
+        windDir: hourly.wind_direction_10m, // graden, waar de wind vandaan komt
+        cloud: hourly.cloud_cover,
+        solarRad: hourly.shortwave_radiation,
+        tide,
+        tideExtremes: computeTideExtremes(tide),
+      };
+      statusEl.classList.add('hidden');
+      renderDay();
+      updateTimeViews();
+    } catch (err) {
+      console.error(err);
+      if (request !== state.weatherRequest) return;
+      statusEl.textContent = 'De verwachting laden is mislukt. Kies de plek opnieuw om het nog eens te proberen.';
+      statusEl.classList.remove('hidden');
+    }
+  }
+
+  /** Bouwt de rij met kiesbare dagen, vanaf vandaag. */
+  function buildDays() {
+    const today = todayLocalMidnight();
+    const el = $id('day-chips');
+    el.innerHTML = '';
+    state.dayKeys = [];
+    for (let i = 0; i < FORECAST_DAYS; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      state.dayKeys.push(toISODateLocal(d));
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip';
+      b.textContent = i === 0 ? 'Vandaag' : (i === 1 ? 'Morgen' : d.toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric' }));
+      b.addEventListener('click', () => {
+        if (i === state.dayIndex) return;
+        // Zelfde kloktijd op de andere dag; "Nu" loslaten.
+        if (state.live) { const n = new Date(); state.minutes = Math.floor((n.getHours() * 60 + n.getMinutes()) / 15) * 15; }
+        state.live = false;
+        state.dayIndex = i;
+        renderDay();
+        updateTimeViews(true);
+      });
+      el.appendChild(b);
+    }
+  }
+
+  /** Tijdschuif, "Nu"-knop en de klok die "Nu" laat meelopen. */
+  function initTimeControls() {
+    let queued = false;
+    $id('time-slider').addEventListener('input', (e) => {
+      state.live = false;
+      state.minutes = Number(e.target.value);
+      if (queued) return; // hooguit één keer per beeld hertekenen tijdens het schuiven
+      queued = true;
+      requestAnimationFrame(() => { queued = false; updateTimeViews(true); });
+    });
+    $id('now-btn').addEventListener('click', () => {
+      const dayChanged = state.dayIndex !== 0;
+      state.live = true;
+      state.dayIndex = 0;
+      if (dayChanged) renderDay();
+      updateTimeViews(true);
+    });
+    setInterval(() => {
+      if (toISODateLocal(new Date()) !== state.dayKeys[0]) {
+        // Middernacht voorbij: de dagen schuiven op.
+        buildDays();
+        state.dayIndex = 0;
+        if (state.lat !== null) fetchWeatherAndTide(state.lat, state.lon);
+      }
+      if (state.live) updateTimeViews(false);
+    }, 60000);
+  }
+
+  /** De uren van één dag uit de opgehaalde reeks, in de vorm die de grafieken verwachten. */
+  function daySlice(key) {
+    const f = state.forecast;
+    if (!f) return null;
+    const a = f.timeStrings.findIndex((t) => t.startsWith(key));
+    if (a < 0) return null;
+    let b = a;
+    while (b < f.timeStrings.length && f.timeStrings[b].startsWith(key)) b++;
+    const cut = (arr) => (arr ? arr.slice(a, b) : null);
+    const tide = cut(f.tide);
+    const tideExtremes = new Map();
+    f.tideExtremes.forEach((kind, i) => { if (i >= a && i < b) tideExtremes.set(i - a, kind); });
+    return {
+      times: cut(f.times), temps: cut(f.temps), feels: cut(f.feels), precip: cut(f.precip), wind: cut(f.wind),
+      windBft: cut(f.windBft), gustBft: cut(f.gustBft), windDir: cut(f.windDir), cloud: cut(f.cloud), solarRad: cut(f.solarRad),
+      tideSeries: tide.some((v) => v != null) ? tide : null,
+      tideExtremes,
+    };
+  }
+
+  /** Gemiddelde windrichting over een aantal uren (via vectoren, zodat 350° en 10° samen 0° geven). */
+  function meanDirection(degs) {
+    let x = 0, y = 0;
+    degs.forEach((d) => { if (d != null) { x += Math.sin((d * Math.PI) / 180); y += Math.cos((d * Math.PI) / 180); } });
+    if (!x && !y) return null;
+    return ((Math.atan2(x, y) * 180) / Math.PI + 360) % 360;
+  }
+
+  /** Tekent alles wat bij de gekozen dag hoort: dagdelen, zon- en getijtijden, grafieken. */
+  function renderDay() {
+    const raw = daySlice(state.dayKeys[state.dayIndex]);
+    state.dayRaw = raw;
+    const factsEl = $id('day-facts');
+
+    // Zon op en onder: te berekenen zonder weerdata.
+    const facts = [];
+    if (state.lat !== null) {
+      const day = parseISODateLocal(state.dayKeys[state.dayIndex]);
+      const sun = SunCalc.getTimes(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 12), state.lat, state.lon);
+      facts.push(`Zon op <b>${formatTime(sun.sunrise)}</b>, onder <b>${formatTime(sun.sunset)}</b>`);
+    }
+
+    if (raw) {
+      const high = [], low = [];
+      raw.tideExtremes.forEach((kind, i) => (kind === 'high' ? high : low).push('±' + formatTime(raw.times[i])));
+      if (high.length) facts.push(`Hoogwater <b>${high.join(', ')}</b>`);
+      if (low.length) facts.push(`Laagwater <b>${low.join(', ')}</b>`);
+    }
+    factsEl.innerHTML = facts.join(' · ');
+    renderWeatherCharts(raw);
+  }
+
+  // ---------------------------------------------------------------
+  // 6b. KNMI-WAARSCHUWINGEN (code geel / oranje / rood)
+  // ---------------------------------------------------------------
+
+  /** "Morgen 06:00", "za 14:00"; vandaag alleen de tijd. */
+  function warnTime(d) {
+    const today = todayLocalMidnight();
+    const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - today) / 86400000);
+    const prefix = days === 0 ? '' : (days === 1 ? 'morgen ' : d.toLocaleDateString('nl-NL', { weekday: 'short' }) + ' ');
+    return prefix + formatTime(d);
+  }
+
+  /** Haalt de Meteoalarm-feed van het KNMI op en bewaart alleen geldende of aankomende
+   *  waarschuwingen van niveau geel of hoger, samengevoegd per soort, niveau en periode. */
+  function parseWarnings(data) {
+    const now = Date.now();
+    const groups = new Map();
+    (data.warnings || []).forEach((w) => {
+      const alert = w && w.alert;
+      if (!alert || alert.msgType === 'Cancel') return;
+      const infos = alert.info || [];
+      const info = infos.find((i) => /^nl/i.test(i.language || '')) || infos[0];
+      if (!info) return;
+      const param = (name) => { const p = (info.parameter || []).find((x) => x.valueName === name); return p ? String(p.value) : ''; };
+      const level = (param('awareness_level').split(';')[1] || '').trim().toLowerCase();
+      if (!WARNING_LEVELS[level]) return; // groen of onbekend
+      const typeId = parseInt(param('awareness_type'), 10);
+      const start = new Date(info.onset || info.effective);
+      const end = new Date(info.expires);
+      if (isNaN(end) || end.getTime() < now) return;
+      const key = [level, typeId, info.onset, info.expires].join('|');
+      let g = groups.get(key);
+      if (!g) {
+        g = { level, typeId, start, end, areas: [], text: '' };
+        groups.set(key, g);
+      }
+      (info.area || []).forEach((a) => { if (a.areaDesc && g.areas.indexOf(a.areaDesc) < 0) g.areas.push(a.areaDesc); });
+      if (!g.text && info.description && !/^geen waarschuwing/i.test(info.description)) g.text = String(info.description).replace(/\s+/g, ' ').trim();
+    });
+    return Array.from(groups.values()).sort((a, b) => WARNING_LEVELS[b.level].rank - WARNING_LEVELS[a.level].rank || a.start - b.start);
+  }
+
+  /** Toont de waarschuwingen; zonder waarschuwingen blijft het vak verborgen. */
+  function renderWarnings() {
+    const el = $id('warnings');
+    const list = state.warnings || [];
+    if (!list.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+    const now = new Date();
+    el.innerHTML = list.map((g) => {
+      const land = g.areas.filter((a) => !/^(IJsselmeergebied|Waddenzee|Waddeneilanden)$/.test(a)).length;
+      const where = land >= LAND_PROVINCES ? 'Heel Nederland' : g.areas.join(', ');
+      const when = g.start <= now ? `tot ${warnTime(g.end)}` : `${warnTime(g.start)} – ${warnTime(g.end)}`;
+      const text = g.text.length > 220 ? g.text.slice(0, 217).trimEnd() + '…' : g.text;
+      return `<div class="warn ${g.level}">` +
+        `<div class="warn-head"><span class="lvl">${WARNING_LEVELS[g.level].label}</span>` +
+        `<b>${escapeHtml(WARNING_TYPES[g.typeId] || 'Weer')}</b><span>${escapeHtml(when)}</span></div>` +
+        `<div class="warn-where">${escapeHtml(where)}</div>` +
+        (text ? `<div class="warn-text">${escapeHtml(text)}</div>` : '') +
+        `</div>`;
+    }).join('');
+    el.classList.remove('hidden');
+  }
+
+  async function loadWarnings() {
+    try {
+      const res = await fetch(WARNING_FEED);
+      if (!res.ok) throw new Error('Meteoalarm antwoordde met status ' + res.status);
+      state.warnings = parseWarnings(await res.json());
+    } catch (err) {
+      // Stil: zonder (bereikbare) meldingen toont de pagina gewoon niets extra's.
+      console.warn('KNMI-waarschuwingen laden mislukt:', err);
+      state.warnings = [];
+    }
+    renderWarnings();
+  }
+
+  /** Eén regel in de strook: het gekozen moment met de waarden van dat uur en het eerstvolgende getij. */
+  function updateReadout(t) {
+    const f = state.forecast;
+    const parts = [`<b>${state.live ? 'Nu' : t.toLocaleDateString('nl-NL', { weekday: 'short' })} ${formatTime(t)}</b>`];
+    const i = f ? f.timeStrings.indexOf(`${toISODateLocal(t)}T${String(t.getHours()).padStart(2, '0')}:00`) : -1;
+    if (i >= 0) {
+      if (f.temps[i] != null) parts.push(`${Math.round(f.temps[i])}°`);
+      if (f.windBft[i] != null) parts.push(`${f.windDir[i] == null ? '' : degreesToCompassNL(f.windDir[i]) + ' '}${f.windBft[i]} Bft`);
+      if (f.precip[i] >= 0.05) parts.push(`${nl1(f.precip[i])} mm`);
+      let next = null;
+      f.tideExtremes.forEach((kind, k) => { if (next === null && f.times[k] > t) next = { kind, time: f.times[k] }; });
+      if (next && next.time - t < 13 * 3600000) parts.push(`${next.kind === 'high' ? 'hoogwater' : 'laagwater'} ±${formatTime(next.time)}`);
+    }
+    $id('readout').innerHTML = parts.join(' · ');
+  }
+
+  /** Brengt alles in lijn met het gekozen moment: schuif, strook, zon op de kaart en de lijn in de grafieken.
+   *  `follow`: schuif de grafieken zo dat het moment in beeld staat. */
+  function updateTimeViews(follow) {
+    const t = viewTime();
+    const minutes = t.getHours() * 60 + t.getMinutes();
+    $id('time-slider').value = String(Math.floor(minutes / 15) * 15);
+    $id('now-btn').classList.toggle('is-active', state.live);
+    Array.from($id('day-chips').children).forEach((c, i) => c.classList.toggle('is-active', i === state.dayIndex));
+    updateReadout(t);
+    drawSunOnMainMap(t);
+    Object.values(state.charts).forEach((c) => c.update('none'));
+    if (follow) scrollChartsToTime(t);
+  }
+
+  function scrollChartsToTime(t) {
+    const chart = Object.values(state.charts)[0];
+    if (!chart || !state.dayRaw) return;
+    const x = getFractionalPixelForTime(chart.scales.x, state.dayRaw.times, t);
+    const sc = $id('weather-charts-scroll');
+    sc.scrollLeft = Y_AXIS_WIDTH + x - (sc.clientWidth + Y_AXIS_WIDTH) / 2;
+  }
+
+  /** Maps an hour-row index to the sunrise/sunset event(s) that fall inside that hour, per day in range. */
+  function computeSunMarkers(times) {
+    const markers = new Map(); // index -> [{ type: 'sunrise'|'sunset', time: Date }]
+    if (!times.length || state.lat === null || state.lon === null) return markers;
+    const seenDays = new Set();
+    times.forEach((t) => {
+      const dayKey = t.toDateString();
+      if (seenDays.has(dayKey)) return;
+      seenDays.add(dayKey);
+      const noon = new Date(t.getFullYear(), t.getMonth(), t.getDate(), 12, 0, 0);
+      const sunTimes = SunCalc.getTimes(noon, state.lat, state.lon);
+      [
+        { type: 'sunrise', time: sunTimes.sunrise },
+        { type: 'sunset', time: sunTimes.sunset },
+      ].forEach((m) => {
+        if (!m.time || isNaN(m.time.getTime())) return;
+        const idx = times.findIndex((rowTime) => {
+          const rowEnd = new Date(rowTime.getTime() + 3600000);
+          return m.time >= rowTime && m.time < rowEnd;
+        });
+        if (idx === -1) return;
+        if (!markers.has(idx)) markers.set(idx, []);
+        markers.get(idx).push(m);
+      });
+    });
+    return markers;
+  }
+
+  /** Maps an hour-row index to 'high' or 'low' where the hourly tide series has a genuine local
+   *  extreme (both neighbouring hours are lower/higher) — the closest a purely hourly dataset can
+   *  get to naming the moment of high/low water. */
+  function computeTideExtremes(tideSeries) {
+    const extremes = new Map();
+    if (!tideSeries) return extremes;
+    for (let i = 1; i < tideSeries.length - 1; i++) {
+      const v = tideSeries[i];
+      const prev = tideSeries[i - 1];
+      const next = tideSeries[i + 1];
+      if (v === null || prev === null || next === null) continue;
+      if (v > prev && v > next) extremes.set(i, 'high');
+      else if (v < prev && v < next) extremes.set(i, 'low');
+    }
+    return extremes;
+  }
+
+  /** Eén label per uur op de x-as. De grafieken tonen één dag, dus alleen de tijd. */
+  function buildXAxisLabels(times) {
+    return times.map((t) => formatTime(t));
+  }
+
+  /** Small strip of rotated arrows shown just below the Windkracht-grafiek, one per uur —
+   *  elke pijl wijst naar het kompaspunt waar de wind vandaan komt (zoals een windvaan);
+   *  de precieze graden + windstreek staan als tooltip op de pijl zelf. Dit is een altijd
+   *  zichtbare rij in plaats van alleen zichtbaar bij hover/tap, omdat de windrichting per
+   *  uur direct afleesbaar moet zijn, niet verstopt achter een interactie. */
+  function buildWindDirRowHtml(times, windDir) {
+    if (!windDir) return '';
+    const cells = times
+      .map((t, i) => {
+        const deg = windDir[i];
+        if (deg == null || isNaN(deg)) {
+          return `<div class="wind-dir-cell" title="${formatTime(t)} — windrichting onbekend">–</div>`;
+        }
+        const compass = degreesToCompassNL(deg);
+        const rounded = Math.round(deg);
+        return (
+          `<div class="wind-dir-cell" title="${formatTime(t)} — windrichting ${compass} (${rounded}°)">` +
+          `<span class="wind-dir-arrow" style="transform:rotate(${rounded}deg)">↑</span>` +
+          `</div>`
+        );
+      })
+      .join('');
+    return (
+      `<div class="chart-row wind-dir-row">` +
+      `<div class="y-axis-sticky" aria-hidden="true"></div>` +
+      `<div class="wind-dir-wrap" style="grid-template-columns:repeat(${times.length},1fr)">${cells}</div>` +
+      `</div>`
+    );
+  }
+
+  /** `#rrggbb` + alpha -> `rgba(...)`, used for the soft fill under line charts. */
+  function hexToRgba(hex, alpha) {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  /** Maps an arbitrary timestamp to its exact pixel x-position along the hourly category
+   *  x-axis, interpolating between the two neighbouring hourly points rather than snapping
+   *  to whichever whole hour it falls within. Shared by the sunrise/sunset markers and the
+   *  "Nu" line so both land on their real time, e.g. 5:48 sits 80% of the way from the 5:00
+   *  tick to the 6:00 tick instead of straight on top of the 5:00 tick. */
+  function getFractionalPixelForTime(xScale, times, target) {
+    const first = times[0].getTime();
+    const hoursFromStart = (target.getTime() - first) / 3600000;
+    const idx0 = clamp(Math.floor(hoursFromStart), 0, times.length - 1);
+    const idx1 = clamp(idx0 + 1, 0, times.length - 1);
+    const frac = hoursFromStart - idx0;
+    const x0 = xScale.getPixelForValue(idx0);
+    const x1 = xScale.getPixelForValue(idx1);
+    return x0 + (x1 - x0) * frac;
+  }
+
+  /** Vertical sunrise/sunset reference lines with their time, drawn on every chart. */
+  function buildSunLinesPlugin(sunMarkers, times) {
+    return {
+      id: 'sunLines',
+      afterDraw(chart) {
+        if (!sunMarkers.size) return;
+        const { ctx, chartArea, scales } = chart;
+        const xScale = scales.x;
+        ctx.save();
+        sunMarkers.forEach((markers) => {
+          markers.forEach((m) => {
+            const x = getFractionalPixelForTime(xScale, times, m.time);
+            if (x < chartArea.left - 1 || x > chartArea.right + 1) return;
+            const color = m.type === 'sunrise' ? COLORS.sunrise : COLORS.sunset;
+            const arrow = m.type === 'sunrise' ? '⬆️' : '⬇️';
+            ctx.beginPath();
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.4;
+            ctx.moveTo(x, chartArea.top);
+            ctx.lineTo(x, chartArea.bottom);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            const nearRightEdge = x > chartArea.right - 48;
+            ctx.textAlign = nearRightEdge ? 'right' : 'left';
+            const textX = x + (nearRightEdge ? -5 : 5);
+            // Arrow (up = zonsopkomst, down = zonsondergang) on its own line, sun emoji +
+            // exact time on the line below — matches the requested arrow-plus-sun-emoji style.
+            ctx.font = '13px Inter, sans-serif';
+            ctx.fillStyle = color;
+            ctx.fillText(arrow, textX, chartArea.top + 12);
+            ctx.font = '600 11px Inter, sans-serif';
+            ctx.fillText(`☀️ ${formatTime(m.time)}`, textX, chartArea.top + 27);
+          });
+        });
+        ctx.restore();
+      },
+    };
+  }
+
+  /** Marks each local high/low tide point on the tide chart with a small dot and a
+   *  "▲ Hoogwater 14:00" / "▼ Laagwater 08:00" label, per the requested tide annotations. */
+  function buildTideExtremesPlugin(tideExtremes, times) {
+    return {
+      id: 'tideExtremes',
+      afterDatasetsDraw(chart) {
+        if (!tideExtremes.size) return;
+        const { ctx, chartArea } = chart;
+        const meta = chart.getDatasetMeta(0);
+        ctx.save();
+        tideExtremes.forEach((kind, idx) => {
+          const point = meta.data[idx];
+          if (!point) return;
+          const { x, y } = point;
+          ctx.beginPath();
+          ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = COLORS.tide;
+          ctx.fill();
+          ctx.lineWidth = 1.2;
+          ctx.strokeStyle = '#FBFAF4';
+          ctx.stroke();
+
+          const label = `${kind === 'high' ? '▲ Hoogwater' : '▼ Laagwater'} ${formatTime(times[idx])}`;
+          ctx.font = '600 10px Inter, sans-serif';
+          ctx.fillStyle = COLORS.tide;
+          ctx.textAlign = 'center';
+          const yOffset = kind === 'high' ? -10 : 16;
+          const clampedY = Math.min(Math.max(y + yOffset, chartArea.top + 10), chartArea.bottom - 4);
+          ctx.fillText(label, x, clampedY);
+        });
+        ctx.restore();
+      },
+    };
+  }
+
+  /** Verticale paarse lijn op het gekozen moment ("Nu" of het tijdstip van de schuif), op elke
+   *  grafiek, precies tussen de twee uren in waar het moment valt. */
+  function buildTimeLinePlugin(times) {
+    return {
+      id: 'timeLine',
+      afterDraw(chart) {
+        if (!times.length) return;
+        const t = viewTime();
+        const first = times[0].getTime();
+        const last = times[times.length - 1].getTime() + 3600000;
+        if (t.getTime() < first || t.getTime() > last) return;
+
+        const { ctx, chartArea, scales } = chart;
+        const x = getFractionalPixelForTime(scales.x, times, t);
+        if (x < chartArea.left - 1 || x > chartArea.right + 1) return;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = COLORS.now;
+        ctx.lineWidth = 1.6;
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+        // Onderaan getekend, zodat het niet botst met de zon-tijden bovenaan.
+        const nearRightEdge = x > chartArea.right - 60;
+        ctx.textAlign = nearRightEdge ? 'right' : 'left';
+        ctx.font = '600 11px Inter, sans-serif';
+        ctx.fillStyle = COLORS.now;
+        ctx.fillText(`${state.live ? 'Nu ' : ''}${formatTime(t)}`, x + (nearRightEdge ? -5 : 5), chartArea.bottom - 6);
+        ctx.restore();
+      },
+    };
+  }
+
+  /** Keeps the sticky, non-scrolling y-axis label column (to the left of each chart) in sync
+   *  with that chart's actual computed scale, reading tick positions straight from the live
+   *  Chart.js scale rather than duplicating its layout math — so the labels always land
+   *  exactly on the gridlines they describe, even as the chart resizes. */
+  function buildStickyAxisSyncPlugin(key) {
+    return {
+      id: 'stickyAxisSync',
+      afterRender(chart) {
+        const axisEl = document.getElementById(`axis-${key}`);
+        if (!axisEl) return;
+        const yScale = chart.scales.y;
+        const ticks = yScale.ticks || [];
+        axisEl.innerHTML = ticks
+          .map((t) => {
+            const pixel = yScale.getPixelForValue(t.value);
+            const label = yScale.getLabelForValue(t.value);
+            return `<span class="y-tick" style="top:${pixel}px">${label}</span>`;
+          })
+          .join('');
+      },
+    };
+  }
+
+  /** Builds one Chart.js config for a single-metric mini-chart. `dirArr` is only passed for
+   *  the wind chart — when present, the hover/tap tooltip also mentions the windrichting
+   *  for that hour, in addition to the always-visible arrow row underneath the chart. */
+  function buildChartConfig(def, dataArr, times, xLabels, extraPlugins, dirArr, extraArr) {
+    const isBar = def.type === 'bar';
+    const dataset = {
+      label: def.label,
+      data: dataArr,
+      borderColor: def.color,
+      backgroundColor: isBar ? hexToRgba(def.color, 0.55) : hexToRgba(def.color, 0.14),
+      borderWidth: isBar ? 0 : 3,
+      borderDash: def.dash,
+      fill: !!def.fill,
+      stepped: def.stepped || false,
+      tension: def.type === 'line' && !def.stepped ? 0.3 : 0,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      pointHitRadius: 10,
+      maxBarThickness: isBar ? 18 : undefined,
+      spanGaps: true,
+    };
+
+    const datasets = [dataset];
+    const hasExtra = !!(def.extra && extraArr && extraArr.some((v) => v != null));
+    if (hasExtra) {
+      datasets.push({
+        label: def.extra.label,
+        data: extraArr,
+        borderColor: def.extra.color,
+        backgroundColor: 'transparent',
+        borderWidth: 2.4,
+        borderDash: [7, 5],
+        fill: false,
+        stepped: def.stepped || false,
+        tension: def.type === 'line' && !def.stepped ? 0.3 : 0,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHitRadius: 10,
+        spanGaps: true,
+      });
+    }
+
+    return {
+      type: def.type,
+      data: { labels: times.map((_, i) => i), datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        layout: { padding: { top: 30, right: 10, left: 2, bottom: 4 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => {
+                const t = times[items[0].dataIndex];
+                return `${formatTime(t)} — ${t.toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short' })}`;
+              },
+              label: (item) => {
+                if (hasExtra && item.datasetIndex === 1) return `${def.extra.label}: ${def.extra.tooltip(item.raw)}`;
+                const base = hasExtra ? `${def.label.toLowerCase()}: ${def.tooltip(item.raw)}` : def.tooltip(item.raw);
+                if (!dirArr) return base;
+                const deg = dirArr[item.dataIndex];
+                return deg == null || isNaN(deg) ? base : `${base} · uit ${degreesToCompassNL(deg)} (${Math.round(deg)}°)`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'category',
+            ticks: {
+              display: true,
+              autoSkip: false,
+              maxRotation: 0,
+              minRotation: 0,
+              font: { size: 12, weight: '500' },
+              color: '#2E3338',
+              callback: (value, index) => xLabels[index],
+            },
+            grid: { color: 'rgba(31,35,40,0.06)', drawTicks: false },
+          },
+          y: {
+            beginAtZero: def.yMin === 0,
+            min: def.yMin,
+            max: def.yMax,
+            ticks: {
+              // The tick text itself is drawn in the sticky HTML column to the left
+              // (see buildStickyAxisSyncPlugin) rather than inside the canvas, so it stays
+              // visible while the chart scrolls; the count still governs the gridlines.
+              display: false,
+              count: 5,
+            },
+            grid: { color: 'rgba(31,35,40,0.06)' },
+          },
+        },
+      },
+      plugins: extraPlugins || [],
+    };
+  }
+
+  /** Rebuilds the stacked mini-charts for one day (`raw`, see daySlice). Charts are destroyed and
+   *  recreated rather than updated in place — with only a handful of small charts this is cheap. */
+  function renderWeatherCharts(raw) {
+    const scrollEl = document.getElementById('weather-charts-scroll');
+    const innerEl = document.getElementById('weather-charts-inner');
+
+    Object.values(state.charts).forEach((c) => c && c.destroy());
+    state.charts = {};
+    scrollEl.classList.toggle('hidden', !raw);
+    if (!raw) {
+      innerEl.innerHTML = '';
+      return;
+    }
+
+    const { times, temps, feels, gustBft, precip, windBft, windDir, cloud, solarRad, tideSeries, tideExtremes } = raw;
+    const hasTide = !!tideSeries;
+    const visibleDefs = CHART_DEFS.filter((d) => d.key !== 'tide' || hasTide);
+
+    const dataByKey = { temp: temps, wind: windBft, precip, cloud, solar: solarRad, tide: tideSeries };
+    const extraByKey = { temp: feels, wind: gustBft };
+    const sunMarkers = computeSunMarkers(times);
+    const xLabels = buildXAxisLabels(times);
+
+    // Fixed pixel width per hour inside a shared horizontal scroller: the main lever for
+    // mobile readability, so ticks never have to shrink or overlap to fit a narrow screen.
+    // The sticky y-axis column (Y_AXIS_WIDTH) is added on top so the plotted hourly area
+    // itself still gets the full pxPerHour per hour, undiminished by the axis column.
+    const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    const pxPerHour = isMobile ? PIXELS_PER_HOUR_MOBILE : PIXELS_PER_HOUR_DESKTOP;
+    const totalWidth = Math.max(scrollEl.clientWidth || 0, times.length * pxPerHour + Y_AXIS_WIDTH);
+    innerEl.style.width = `${totalWidth}px`;
+    innerEl.style.minWidth = `${totalWidth}px`;
+
+    innerEl.innerHTML =
+      visibleDefs
+        .map(
+          (d) =>
+            `<div class="chart-block" data-key="${d.key}">` +
+            `<div class="chart-block-title"><span class="dot" style="background:${d.color}"></span>${d.label} <span class="unit">(${d.unit})</span>${d.extra && extraByKey[d.key] ? `<span class="unit"><i class="sw" style="border-color:${d.extra.color}"></i>${d.extra.label}</span>` : ''}</div>` +
+            `<div class="chart-row">` +
+            `<div class="y-axis-sticky" id="axis-${d.key}"></div>` +
+            `<div class="chart-canvas-wrap"><canvas id="chart-canvas-${d.key}"></canvas></div>` +
+            `</div>` +
+            (d.key === 'wind' ? buildWindDirRowHtml(times, windDir) : '') +
+            `</div>`
+        )
+        .join('');
+
+    visibleDefs.forEach((d) => {
+      const canvas = document.getElementById(`chart-canvas-${d.key}`);
+      const extraPlugins = [buildSunLinesPlugin(sunMarkers, times), buildTimeLinePlugin(times), buildStickyAxisSyncPlugin(d.key)];
+      if (d.key === 'tide') extraPlugins.push(buildTideExtremesPlugin(tideExtremes, times));
+      const config = buildChartConfig(d, dataByKey[d.key], times, xLabels, extraPlugins, d.key === 'wind' ? windDir : null, extraByKey[d.key]);
+      state.charts[d.key] = new Chart(canvas, config);
+    });
+
+  }
+
+  // ---------------------------------------------------------------
+  // 7. SUN PATH / AZIMUTH — drawn directly on the main map
+  // ---------------------------------------------------------------
+
+  /** Tekent de zon voor moment `now`: de dagboog met uurcijfers (alleen opnieuw als de plek of de
+   *  dag verandert) en de stand van de zon op dat moment (bij elke stap van de tijdschuif). */
+  function drawSunOnMainMap(now) {
+    if (state.lat === null) return;
+    const lat = state.lat, lon = state.lon;
+    const times = SunCalc.getTimes(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12), lat, lon);
+    const currentPos = SunCalc.getPosition(now, lat, lon);
+    const currentAz = azimuthToCompassBearing(currentPos.azimuth);
+    const currentAlt = (currentPos.altitude * 180) / Math.PI;
+    const aboveHorizon = currentAlt > 0;
+    const radiusKm = 0.65;
+
+    if (!state.sunNowGroup) state.sunNowGroup = L.layerGroup().addTo(state.mainMap);
+    state.sunNowGroup.clearLayers();
+
+    const arcKey = `${lat},${lon},${toISODateLocal(now)}`;
+    const redrawArc = arcKey !== state.sunArcKey;
+    state.sunArcKey = arcKey;
+    if (redrawArc) state.sunLayerGroup.clearLayers();
+
+    const hasDaylightTimes = times.sunrise && times.sunset && !isNaN(times.sunrise) && !isNaN(times.sunset);
+
+    if (redrawArc && hasDaylightTimes) {
+      const sunriseAz = azimuthToCompassBearing(SunCalc.getPosition(times.sunrise, lat, lon).azimuth);
+      const sunsetAz = azimuthToCompassBearing(SunCalc.getPosition(times.sunset, lat, lon).azimuth);
+
+      // Sunrise / sunset direction lines.
+      L.polyline([[lat, lon], destinationPoint(lat, lon, sunriseAz, radiusKm)], { color: COLORS.sunrise, weight: 2.5, dashArray: '6 4' }).addTo(state.sunLayerGroup);
+      L.polyline([[lat, lon], destinationPoint(lat, lon, sunsetAz, radiusKm)], { color: COLORS.sunset, weight: 2.5, dashArray: '6 4' }).addTo(state.sunLayerGroup);
+
+      // Day arc: the sun's real position (altitude-scaled radius, like a flattened sky
+      // dome) sampled every 15 minutes from sunrise to sunset — so the arc's shape and
+      // the hour markers on it are geometrically consistent with each other.
+      const arcPoints = [];
+      for (let t = new Date(times.sunrise); t <= times.sunset; t = new Date(t.getTime() + 15 * 60000)) {
+        const pos = SunCalc.getPosition(t, lat, lon);
+        const az = azimuthToCompassBearing(pos.azimuth);
+        const alt = (pos.altitude * 180) / Math.PI;
+        const r = radiusKm * clamp(1 - Math.max(alt, 0) / 90, 0.15, 1);
+        arcPoints.push(destinationPoint(lat, lon, az, r));
+      }
+      L.polyline(arcPoints, { color: 'rgba(31,35,40,0.35)', weight: 1.5, dashArray: '2 5' }).addTo(state.sunLayerGroup);
+
+      // Whole-hour markers along the arc, from sunrise to sunset — plain digits 1-24, no minutes.
+      let hourCursor = new Date(times.sunrise);
+      hourCursor.setMinutes(0, 0, 0);
+      if (hourCursor < times.sunrise) hourCursor = new Date(hourCursor.getTime() + 3600000);
+      for (; hourCursor <= times.sunset; hourCursor = new Date(hourCursor.getTime() + 3600000)) {
+        const pos = SunCalc.getPosition(hourCursor, lat, lon);
+        const az = azimuthToCompassBearing(pos.azimuth);
+        const alt = (pos.altitude * 180) / Math.PI;
+        if (alt <= 0) continue;
+        const r = radiusKm * clamp(1 - alt / 90, 0.15, 1);
+        L.marker(destinationPoint(lat, lon, az, r), { icon: buildHourIcon(hourNumberLabel(hourCursor)) }).addTo(state.sunLayerGroup);
+      }
+    }
+
+    // Current sun position: distance toward the center scales with altitude (higher = closer).
+    const altFactor = clamp(1 - Math.max(currentAlt, 0) / 90, 0.25, 1);
+    const currentPoint = destinationPoint(lat, lon, currentAz, radiusKm * altFactor + 0.05);
+    L.polyline([[lat, lon], currentPoint], { color: aboveHorizon ? COLORS.current : 'rgba(31,35,40,0.3)', weight: 2.5 }).addTo(state.sunNowGroup);
+    L.marker(currentPoint, { icon: buildSunIcon(aboveHorizon), interactive: false }).addTo(state.sunNowGroup);
+  }
+
+  /** Hidden logo easter egg: tapping the compass-and-spoonbill icon plays a random snippet
+   *  (max 3s) of a common Dutch bird's song. Deliberately has no button styling — the tiny
+   *  "chirp" bounce (see .logo-chirping) and the sound itself are the only feedback. */
+  function initLogoBirdSound() {
+    const logo = document.getElementById('logo-icon');
+    if (!logo) return;
+    let currentAudio = null;
+    let stopTimer = null;
+
+    logo.addEventListener('click', () => {
+      if (currentAudio) currentAudio.pause();
+      if (stopTimer) clearTimeout(stopTimer);
+
+      const pick = BIRD_SOUNDS[Math.floor(Math.random() * BIRD_SOUNDS.length)];
+      const audio = new Audio(pick.url);
+      audio.volume = 0.7;
+      currentAudio = audio;
+      audio.play().catch(() => {}); // ignore — e.g. a browser quirk blocking playback
+      stopTimer = setTimeout(() => {
+        audio.pause();
+        audio.currentTime = 0;
+      }, 3000);
+
+      logo.classList.remove('logo-chirping');
+      void logo.offsetWidth; // restart the CSS animation even on rapid repeat clicks
+      logo.classList.add('logo-chirping');
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 8. BOOTSTRAPPING
+  // ---------------------------------------------------------------
+  document.addEventListener('DOMContentLoaded', () => {
+    initMaps();
+    buildDays();
+    initSheet();
+    initRoute();
+    initAddressSearch();
+    initGpsButton();
+    initOrientationButton();
+    initWaarnemingButton();
+    initLogoBirdSound();
+    initTimeControls();
+    loadWarnings();
+    setInterval(loadWarnings, WARNING_REFRESH_MS);
+    syncMode();
+    applySheet(false);
+    // Begin met een bekende plek, zodat er meteen iets te zien is.
+    onLocationSelected(DEFAULT_LOCATION.lat, DEFAULT_LOCATION.lon, DEFAULT_LOCATION.name);
+  });
+  </script>
+</body>
+</html>
